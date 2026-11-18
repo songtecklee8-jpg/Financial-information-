@@ -5,14 +5,40 @@ import type {
   Security,
 } from '@/types'
 import { safeNumber } from '@/lib/format'
+import { hashString, mulberry32 } from '@/lib/prng'
 
 /**
  * 证券主数据 + 高仿真基准数据。
- * 当未配置 Twelve Data Key（或请求受限）时，终端将无缝降级使用本模块的数据，
+ * 当未配置任何行情引擎 Key（或请求受限）时，终端将无缝降级使用本模块的数据，
  * 保证任何查询都有可展示的结构化结果。
  */
 
-interface SecuritySeed {
+const CRYPTO = { market: 'CRYPTO' as const, currency: 'USD' as const }
+
+/** 常见数字资产：代码 → 名称、CoinGecko id、基准价、24h 量、流通量 */
+export const CRYPTO_ASSETS: Record<
+  string,
+  { name: string; cgId: string; price: number; vol: number; supply: number }
+> = {
+  BTC: { name: 'Bitcoin', cgId: 'bitcoin', price: 96500, vol: 2.1e10, supply: 19.8e6 },
+  ETH: { name: 'Ethereum', cgId: 'ethereum', price: 3380, vol: 1.4e10, supply: 120e6 },
+  SOL: { name: 'Solana', cgId: 'solana', price: 212, vol: 4.2e9, supply: 480e6 },
+  BNB: { name: 'BNB', cgId: 'binancecoin', price: 685, vol: 1.8e9, supply: 145e6 },
+  XRP: { name: 'XRP', cgId: 'ripple', price: 2.28, vol: 5.6e9, supply: 57e9 },
+  ADA: { name: 'Cardano', cgId: 'cardano', price: 0.92, vol: 1.1e9, supply: 35e9 },
+  DOGE: { name: 'Dogecoin', cgId: 'dogecoin', price: 0.34, vol: 2.4e9, supply: 147e9 },
+  AVAX: { name: 'Avalanche', cgId: 'avalanche-2', price: 38.5, vol: 6.1e8, supply: 410e6 },
+  LINK: { name: 'Chainlink', cgId: 'chainlink', price: 22.6, vol: 7.2e8, supply: 640e6 },
+  MATIC: { name: 'Polygon', cgId: 'matic-network', price: 0.52, vol: 3.4e8, supply: 10e9 },
+  DOT: { name: 'Polkadot', cgId: 'polkadot', price: 7.1, vol: 3.8e8, supply: 1.5e9 },
+  LTC: { name: 'Litecoin', cgId: 'litecoin', price: 108, vol: 5.5e8, supply: 75e6 },
+  TON: { name: 'Toncoin', cgId: 'the-open-network', price: 5.4, vol: 2.9e8, supply: 2.5e9 },
+  SUI: { name: 'Sui', cgId: 'sui', price: 4.25, vol: 1.6e9, supply: 3.1e9 },
+  ARB: { name: 'Arbitrum', cgId: 'arbitrum', price: 0.82, vol: 3.1e8, supply: 4.3e9 },
+  OP: { name: 'Optimism', cgId: 'optimism', price: 1.78, vol: 2.6e8, supply: 1.3e9 },
+}
+
+export interface SecuritySeed {
   symbol: string
   name: string
   exchange: string
@@ -270,26 +296,6 @@ const SEEDS: SecuritySeed[] = [
 // 确定性伪随机：同一 symbol 永远得到同一套数据，避免刷新后数值乱跳
 // ---------------------------------------------------------------------------
 
-function hashString(input: string): number {
-  let h = 2166136261
-  for (let i = 0; i < input.length; i += 1) {
-    h ^= input.charCodeAt(i)
-    h = Math.imul(h, 16777619)
-  }
-  return h >>> 0
-}
-
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0
-    let t = a
-    t = Math.imul(t ^ (t >>> 15), t | 1)
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-}
-
 // ---------------------------------------------------------------------------
 // 派生计算
 // ---------------------------------------------------------------------------
@@ -419,12 +425,80 @@ const SEED_MAP: Map<string, SecuritySeed> = new Map(
   SEEDS.map((seed) => [seed.symbol, seed]),
 )
 
+const CRYPTO_QUOTES = ['USDT', 'USDC', 'BUSD', 'USD'] as const
+
+/**
+ * 识别数字资产代码：支持 `BTC`、`BTCUSD`、`BTC-USD`、`BTCUSDT`、`BTC/USDT`。
+ * 带 `.KL` 的一律视为马股；裸代码需在数字资产表中且不在证券主数据表内。
+ */
+export function detectCrypto(input: string): { key: string; cgId: string } | null {
+  const compact = input.trim().toUpperCase().replace(/[\s/_-]/g, '')
+  if (!compact || compact.endsWith('.KL')) return null
+  for (const suffix of CRYPTO_QUOTES) {
+    if (compact.length > suffix.length && compact.endsWith(suffix)) {
+      const base = compact.slice(0, -suffix.length)
+      const meta = CRYPTO_ASSETS[base]
+      if (meta && !SEED_MAP.has(base)) return { key: base, cgId: meta.cgId }
+    }
+  }
+  const meta = CRYPTO_ASSETS[compact]
+  if (meta && compact.length >= 3 && !SEED_MAP.has(compact)) return { key: compact, cgId: meta.cgId }
+  return null
+}
+
+export function isCryptoAsset(symbol: string): boolean {
+  return detectCrypto(symbol) !== null
+}
+
+/** 数字资产的基准主数据（基本面不适用，仅用于行情与图表） */
+function cryptoSeed(symbol: string, key: string): SecuritySeed {
+  const meta = CRYPTO_ASSETS[key]!
+  const rand = mulberry32(hashString(`${key}:crypto`))
+  const price = meta.price * (0.985 + rand() * 0.03)
+  const supply = meta.supply
+  return {
+    ...CRYPTO,
+    symbol,
+    name: `${meta.name} / USDT`,
+    exchange: 'Binance · CoinGecko',
+    sector: 'Digital Assets',
+    industryPE: 0,
+    price,
+    sharesOutstanding: supply,
+    eps: 0,
+    bookValuePerShare: 0,
+    netDebt: 0,
+    ebitda: 0,
+    revenueTTM: 0,
+    freeCashFlow: 0,
+    dividendPerShare: 0,
+    epsGrowth5y: 0,
+    forwardEps: 0,
+    grossMargin: 0,
+    currentRatio: 0,
+    debtToEquity: 0,
+    pe5yAvg: 0,
+    averageVolume: meta.vol,
+  }
+}
+
 export function getSeed(symbol: string): SecuritySeed {
   const normalized = normalizeSymbol(symbol)
-  return SEED_MAP.get(normalized) ?? synthesizeSeed(normalized)
+  const seeded = SEED_MAP.get(normalized)
+  if (seeded) return seeded
+  const crypto = detectCrypto(normalized)
+  if (crypto) return cryptoSeed(normalized, crypto.key)
+  return synthesizeSeed(normalized)
 }
 
 export const ALL_SECURITIES: Security[] = SEEDS.map(seedToSecurity)
+
+/** 数字资产主数据（用于搜索与行情墙） */
+export const CRYPTO_SECURITIES: Security[] = Object.entries(CRYPTO_ASSETS).map(([key]) =>
+  seedToSecurity(cryptoSeed(`${key}USDT`, key)),
+)
+
+export const ALL_INSTRUMENTS: Security[] = [...ALL_SECURITIES, ...CRYPTO_SECURITIES]
 
 function matchScore(security: Security, query: string): number {
   const symbol = security.symbol
@@ -438,11 +512,11 @@ function matchScore(security: Security, query: string): number {
   return 0
 }
 
-/** 本地证券检索：支持代码、名称与行业关键词 */
+/** 本地检索：支持代码、名称与行业关键词（含数字资产） */
 export function searchSecurities(query: string, limit = 8): Security[] {
   const q = query.trim().toUpperCase()
   if (!q) return []
-  return ALL_SECURITIES.map((security) => ({ security, score: matchScore(security, q) }))
+  return ALL_INSTRUMENTS.map((security) => ({ security, score: matchScore(security, q) }))
     .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
@@ -454,11 +528,11 @@ export const FEATURED_SYMBOLS = [
   'AAPL',
   'NVDA',
   'TSLA',
+  'BTCUSDT',
   '1155.KL',
   '1295.KL',
   '1023.KL',
   '5347.KL',
-  '4707.KL',
 ] as const
 
 

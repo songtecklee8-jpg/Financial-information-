@@ -1,13 +1,21 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { DataOrigin, Fundamentals, Quote, Security } from '@/types'
+import type {
+  ApiSettings,
+  DataOrigin,
+  Fundamentals,
+  ProviderId,
+  Quote,
+  QuoteSnapshot,
+  Security,
+} from '@/types'
 import {
   baselineFundamentals,
   baselineQuote,
   normalizeSymbol,
   resolveSecurity,
 } from '@/lib/universe'
-import { fetchLiveSnapshot, hasTwelveDataKey } from '@/lib/twelveData'
+import { configuredProviderCount, fetchFundamentals, fetchQuote } from '@/lib/market/failover'
 
 interface SnapshotState {
   security: Security
@@ -24,7 +32,7 @@ function buildBaselineState(symbol: string): SnapshotState {
   }
 }
 
-/** 基准模式下用微小随机游走模拟报价跳动，让终端保持"活着"的手感 */
+/** 基准模式下用微小随机游走模拟报价跳动，让终端保持“活着”的手感 */
 function tickQuote(quote: Quote): Quote {
   const price = Math.max(0.0001, quote.price + (Math.random() - 0.5) * quote.price * 0.0016)
   const change = price - quote.previousClose
@@ -40,63 +48,108 @@ function tickQuote(quote: Quote): Quote {
   }
 }
 
+/** 把引擎返回的快照合并到基准报价之上，缺失字段沿用基准值 */
+function mergeQuote(base: Quote, snap: QuoteSnapshot): Quote {
+  const price = snap.price > 0 ? snap.price : base.price
+  const previousClose = snap.previousClose > 0 ? snap.previousClose : base.previousClose
+  const change = price - previousClose
+  return {
+    ...base,
+    price,
+    previousClose,
+    change,
+    changePercent: previousClose !== 0 ? (change / previousClose) * 100 : 0,
+    open: snap.open ?? base.open,
+    dayHigh: Math.max(snap.dayHigh ?? base.dayHigh, price),
+    dayLow: Math.min(snap.dayLow ?? base.dayLow, price),
+    volume: snap.volume ?? base.volume,
+    fiftyTwoWeekHigh: snap.fiftyTwoWeekHigh ?? base.fiftyTwoWeekHigh,
+    fiftyTwoWeekLow: snap.fiftyTwoWeekLow ?? base.fiftyTwoWeekLow,
+    marketCap: snap.marketCap ?? base.marketCap,
+    currency: snap.currency ?? base.currency,
+    updatedAt: snap.updatedAt ?? new Date().toISOString(),
+    origin: 'live',
+  }
+}
+
 export interface SecuritySnapshot extends SnapshotState {
   origin: DataOrigin
   loading: boolean
   error: string | null
-  /** 实际命中的 Twelve Data 接口 */
-  endpoints: string[]
+  /** 最终命中并提供报价的引擎 */
+  provider: ProviderId | null
+  /** 本次故障转移实际尝试过的引擎顺序 */
+  trail: ProviderId[]
   refresh: () => void
 }
 
-export function useSecuritySnapshot(rawSymbol: string, apiKey: string): SecuritySnapshot {
+/** 实时报价心跳间隔（毫秒） */
+const QUOTE_POLL_MS = 15_000
+
+export function useSecuritySnapshot(rawSymbol: string, settings: ApiSettings): SecuritySnapshot {
   const symbol = normalizeSymbol(rawSymbol)
+  const hasProviders = configuredProviderCount(settings) > 0
+
   const [state, setState] = useState<SnapshotState>(() => buildBaselineState(symbol))
   const [origin, setOrigin] = useState<DataOrigin>('baseline')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [endpoints, setEndpoints] = useState<string[]>([])
+  const [provider, setProvider] = useState<ProviderId | null>(null)
+  const [trail, setTrail] = useState<ProviderId[]>([])
   const [refreshToken, setRefreshToken] = useState(0)
+  const silentRef = useRef(false)
 
   // 切换标的：立刻用基准数据填充，避免出现空窗
   useEffect(() => {
     setState(buildBaselineState(symbol))
     setOrigin('baseline')
     setError(null)
-    setEndpoints([])
+    setProvider(null)
+    setTrail([])
   }, [symbol])
 
-  // 实时拉取（仅在配置了 Key 时）
+  // 实时拉取：多引擎故障转移（仅在配置了任意 Key 时）
   useEffect(() => {
-    if (!hasTwelveDataKey(apiKey)) {
+    if (!hasProviders) {
       setLoading(false)
       return
     }
     const controller = new AbortController()
-    setLoading(true)
-    fetchLiveSnapshot(symbol, apiKey, controller.signal)
-      .then((snapshot) => {
+    if (!silentRef.current) setLoading(true)
+    silentRef.current = false
+
+    const base = buildBaselineState(symbol)
+    fetchQuote(symbol, settings, controller.signal)
+      .then(async (result) => {
+        if (controller.signal.aborted) return
+        const fundamentals = await fetchFundamentals(symbol, settings, controller.signal).catch(
+          () => null,
+        )
         if (controller.signal.aborted) return
         setState({
-          security: snapshot.security,
-          quote: snapshot.quote,
-          fundamentals: snapshot.fundamentals,
+          security: base.security,
+          quote: mergeQuote(base.quote, result.snapshot),
+          fundamentals: fundamentals
+            ? { ...base.fundamentals, ...fundamentals.patch }
+            : base.fundamentals,
         })
         setOrigin('live')
-        setEndpoints(snapshot.endpoints)
+        setProvider(result.provider)
+        setTrail(result.trail)
         setError(null)
       })
       .catch((cause: unknown) => {
         if (controller.signal.aborted) return
         setError(cause instanceof Error ? cause.message : '实时数据拉取失败，已回退基准数据')
         setOrigin('baseline')
-        setEndpoints([])
+        setProvider(null)
+        setTrail([])
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false)
       })
     return () => controller.abort()
-  }, [symbol, apiKey, refreshToken])
+  }, [symbol, settings, hasProviders, refreshToken])
 
   // 基准模式下的报价心跳
   useEffect(() => {
@@ -107,7 +160,20 @@ export function useSecuritySnapshot(rawSymbol: string, apiKey: string): Security
     return () => window.clearInterval(timer)
   }, [origin])
 
-  const refresh = useCallback(() => setRefreshToken((value) => value + 1), [])
+  // 实时模式下的报价轮询，保持当前数据持续刷新
+  useEffect(() => {
+    if (!hasProviders || origin !== 'live') return
+    const timer = window.setInterval(() => {
+      silentRef.current = true
+      setRefreshToken((value) => value + 1)
+    }, QUOTE_POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [hasProviders, origin])
 
-  return { ...state, origin, loading, error, endpoints, refresh }
+  const refresh = useCallback(() => {
+    silentRef.current = false
+    setRefreshToken((value) => value + 1)
+  }, [])
+
+  return { ...state, origin, loading, error, provider, trail, refresh }
 }

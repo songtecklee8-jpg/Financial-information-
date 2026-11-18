@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 
-import { ALL_SECURITIES, baselineQuote } from '@/lib/universe'
+import { ALL_INSTRUMENTS, baselineQuote } from '@/lib/universe'
 import { cn } from '@/lib/cn'
 import { formatPercent, formatPrice } from '@/lib/format'
 
@@ -13,7 +13,7 @@ interface TickerTapeProps {
 export function TickerTape({ onSelect, className }: TickerTapeProps) {
   const entries = useMemo(
     () =>
-      ALL_SECURITIES.map((security) => ({
+      ALL_INSTRUMENTS.map((security) => ({
         security,
         quote: baselineQuote(security.symbol),
       })).sort((a, b) => b.security.market.localeCompare(a.security.market)),

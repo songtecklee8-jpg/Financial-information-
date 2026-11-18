@@ -2,7 +2,10 @@
  * APEX Terminal — 领域模型类型定义
  */
 
-export type Market = 'US' | 'BURSA'
+export type Market = 'US' | 'BURSA' | 'CRYPTO'
+
+/** 资产大类：股票 / 数字资产 */
+export type AssetClass = 'equity' | 'crypto'
 
 export type Currency = 'USD' | 'MYR'
 
@@ -172,9 +175,192 @@ export interface ChatMessage {
 }
 
 export interface ApiSettings {
-  twelveDataKey: string
   geminiKey: string
   geminiModel: string
+  /** 各行情引擎的密钥配置（Key + Secret） */
+  providers: Record<ProviderId, ProviderConfig>
+}
+
+// ---------------------------------------------------------------------------
+// 多引擎行情（Provider）
+// ---------------------------------------------------------------------------
+
+/** 已接入的行情 / 新闻数据引擎 */
+export type ProviderId =
+  | 'finnhub'
+  | 'alpaca'
+  | 'fmp'
+  | 'alphavantage'
+  | 'tiingo'
+  | 'yahoo'
+  | 'binance'
+  | 'coingecko'
+  | 'twelvedata'
+
+export interface ProviderConfig {
+  apiKey: string
+  /** 部分引擎（如 Alpaca）需要第二把密钥 */
+  secretKey: string
+}
+
+/** 指示灯状态 */
+export type ProviderHealth =
+  | 'unknown'
+  | 'no-key'
+  | 'ready'
+  | 'ok'
+  | 'error'
+  | 'rate-limited'
+  | 'cooldown'
+  | 'testing'
+
+export interface ProviderStatus {
+  id: ProviderId
+  health: ProviderHealth
+  message?: string
+  latencyMs?: number
+  checkedAt?: string
+  /** 连续失败次数 */
+  failures: number
+  /** 熔断解除时间戳 */
+  cooldownUntil?: number
+  /** 最近一次成功命中的请求量 */
+  requests: number
+}
+
+// ---------------------------------------------------------------------------
+// K 线与走势
+// ---------------------------------------------------------------------------
+
+export type IntervalKey = '1m' | '5m' | '15m' | '1h' | '4h' | '1d' | '1w' | '1mo'
+
+export type RangeKey = '1d' | '5d' | '1mo' | '3mo' | '6mo' | '1y' | '2y' | '5y' | '10y' | 'max'
+
+/** 单根 K 线（时间戳为毫秒 UTC） */
+export interface Candle {
+  t: number
+  o: number
+  h: number
+  l: number
+  c: number
+  v: number
+}
+
+export interface CandleSeries {
+  symbol: string
+  interval: IntervalKey
+  candles: Candle[]
+  origin: DataOrigin
+  /** 命中的引擎 */
+  provider: ProviderId | null
+  fetchedAt: string
+}
+
+/** 行情快照（引擎无关的中间结构） */
+export interface QuoteSnapshot {
+  price: number
+  previousClose: number
+  open?: number
+  dayHigh?: number
+  dayLow?: number
+  volume?: number
+  fiftyTwoWeekHigh?: number
+  fiftyTwoWeekLow?: number
+  marketCap?: number
+  currency?: Currency
+  updatedAt?: string
+}
+
+/** 基本面补丁（引擎返回的字段覆盖基准值） */
+export type FundamentalsPatch = Partial<Omit<Fundamentals, 'marketCap' | 'enterpriseValue'>>
+
+// ---------------------------------------------------------------------------
+// 新闻中心
+// ---------------------------------------------------------------------------
+
+export type NewsSourceId =
+  | 'wsj'
+  | 'wallstreetcn'
+  | 'cnbc'
+  | 'yahoo'
+  | 'finnhub'
+  | 'alphavantage'
+  | 'gdelt'
+  | 'bernama'
+  | 'thestar'
+  | 'nst'
+  | 'theedgemalaysia'
+  | 'bursa'
+
+export type NewsRegion = 'global' | 'malaysia'
+
+export type NewsCategory = 'macro' | 'equities' | 'rates' | 'energy' | 'tech' | 'crypto' | 'corporate'
+
+export interface NewsArticle {
+  id: string
+  title: string
+  /** Gemini 翻译后的华文标题 */
+  titleZh?: string
+  summary: string
+  summaryZh?: string
+  sourceId: NewsSourceId
+  sourceName: string
+  url: string
+  publishedAt: string
+  region: NewsRegion
+  lang: 'en' | 'zh'
+  tickers: string[]
+  sentiment: 'bullish' | 'bearish' | 'neutral'
+  /** -1 ~ 1 的多空情绪分（Alpha Vantage News & Sentiment 提供） */
+  sentimentScore?: number
+  categories: NewsCategory[]
+  origin: DataOrigin
+  /** 翻译状态 */
+  translation: 'none' | 'pending' | 'done' | 'failed'
+}
+
+/** 五大核心资产类别 */
+export type AssetKey = 'equities' | 'bonds' | 'realEstate' | 'gold' | 'volatility'
+
+export type ImpactDirection = 'bullish' | 'bearish' | 'neutral'
+
+export interface AssetImpact {
+  asset: AssetKey
+  label: string
+  /** 上涨概率 0-100 */
+  up: number
+  /** 下跌概率 0-100（up + down = 100） */
+  down: number
+  direction: ImpactDirection
+  /** 一句话核心驱动逻辑 */
+  driver: string
+  /** 细分说明（如美股大盘 / 科技股 / 马股板块） */
+  detail: string
+}
+
+/** 新闻 → 跨市场冲击推演结果 */
+export interface NewsImpact {
+  articleId: string
+  headline: string
+  /** 核心事件拆解 */
+  eventBreakdown: string
+  /** 传导逻辑 */
+  transmission: string
+  /** 对宏观流动性的影响 */
+  liquidity: string
+  /** 对利率预期的影响 */
+  rateExpectation: string
+  /** 行业基本面影响 */
+  sectorImpact: string
+  assets: AssetImpact[]
+  /** 值得关注的标的 / 指标 */
+  watchlist: string[]
+  /** AI 置信度 0-100 */
+  confidence: number
+  generatedAt: string
+  model: string
+  /** 是否为本地启发式兜底（未配置 Gemini Key） */
+  degraded?: boolean
 }
 
 export interface AiVerdict {

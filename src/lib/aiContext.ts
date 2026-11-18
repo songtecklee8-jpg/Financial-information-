@@ -2,7 +2,7 @@ import type {
   AiVerdict,
   Fundamentals,
   MacroRates,
-  NewsItem,
+  NewsArticle,
   Quote,
   Security,
   ValuationResult,
@@ -15,7 +15,7 @@ export interface AiContextInput {
   fundamentals: Fundamentals
   valuation: ValuationResult
   macro: MacroRates
-  news: NewsItem[]
+  news: NewsArticle[]
 }
 
 function line(label: string, value: string): string {
@@ -98,7 +98,7 @@ export function buildAiContext(input: AiContextInput): string {
     line('美债 10Y - MGS 10Y 利差', `${macro.spread10y.toFixed(2)}%`),
 
     '=== 相关新闻（标题）===',
-    ...pool.map((item) => `[${item.source}] ${item.title}`),
+    ...pool.map((item) => `[${item.sourceName}] ${item.titleZh ?? item.title}`),
   ].join('\n')
 }
 

@@ -1,4 +1,4 @@
-import { Activity, KeyRound, Radio } from 'lucide-react'
+import { Activity, KeyRound, LayoutDashboard, Newspaper, Radio } from 'lucide-react'
 
 import { Badge } from '@/components/ui/Badge'
 import { SearchBar } from '@/components/SearchBar'
@@ -6,12 +6,23 @@ import { useClock } from '@/hooks/useClock'
 import { cn } from '@/lib/cn'
 import { formatClock } from '@/lib/format'
 
+/** 顶部导航的两个主视图 */
+export type AppView = 'dashboard' | 'news'
+
+const NAV_ITEMS: Array<{ key: AppView; label: string; icon: typeof LayoutDashboard }> = [
+  { key: 'dashboard', label: '主看板', icon: LayoutDashboard },
+  { key: 'news', label: '财经新闻中心', icon: Newspaper },
+]
+
 interface TopBarProps {
   symbol: string
   onSelect: (symbol: string) => void
   onOpenSettings: () => void
   origin: 'live' | 'baseline'
-  hasTwelveData: boolean
+  view: AppView
+  onNavigate: (view: AppView) => void
+  /** 已配置（可参与故障转移）的行情引擎数量 */
+  configuredCount: number
   hasGemini: boolean
 }
 
@@ -39,7 +50,9 @@ export function TopBar({
   onSelect,
   onOpenSettings,
   origin,
-  hasTwelveData,
+  view,
+  onNavigate,
+  configuredCount,
   hasGemini,
 }: TopBarProps) {
   const now = useClock(30_000)
@@ -70,6 +83,30 @@ export function TopBar({
           </div>
         </div>
 
+        {/* 主导航 */}
+        <nav className="flex shrink-0 items-center gap-1">
+          {NAV_ITEMS.map((item) => {
+            const Icon = item.icon
+            const active = view === item.key
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => onNavigate(item.key)}
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-[11px] transition',
+                  active
+                    ? 'border-gold/50 bg-gold/12 text-gold'
+                    : 'border-transparent text-dim hover:border-line-2 hover:text-ink',
+                )}
+              >
+                <Icon className="size-3.5" />
+                <span className="hidden sm:inline">{item.label}</span>
+              </button>
+            )
+          })}
+        </nav>
+
         {/* 搜索 */}
         <div className="order-last w-full min-w-0 lg:order-none lg:mx-2 lg:w-auto lg:max-w-2xl lg:flex-1">
           <SearchBar onSelect={onSelect} activeSymbol={symbol} />
@@ -84,11 +121,11 @@ export function TopBar({
 
           <div className="hidden items-center gap-1.5 sm:flex">
             {origin === 'live' ? (
-              <Badge tone="bull" dot title="行情来自 Twelve Data 实时接口">
+              <Badge tone="bull" dot title="行情来自多引擎故障转移实时接口">
                 Live Feed
               </Badge>
             ) : (
-              <Badge tone="neutral" dot title="未配置 API Key，当前为终端内置基准数据">
+              <Badge tone="neutral" dot title="未配置行情 Key，当前为终端内置基准数据">
                 Baseline
               </Badge>
             )}
@@ -99,16 +136,16 @@ export function TopBar({
             onClick={onOpenSettings}
             className={cn(
               'group inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-[11px] transition',
-              hasTwelveData || hasGemini
+              configuredCount > 0 || hasGemini
                 ? 'border-line-2 bg-panel-2 text-dim hover:border-gold/50 hover:text-gold'
                 : 'border-gold/45 bg-gold/10 text-gold hover:bg-gold/15',
             )}
-            title="配置 Twelve Data 与 Gemini API Key"
+            title="配置各行情引擎与 Gemini API Key"
           >
             {hasGemini ? <Radio className="size-3.5" /> : <KeyRound className="size-3.5" />}
             <span className="hidden sm:inline">API 设置</span>
             <span className="sm:hidden">API</span>
-            {!hasTwelveData && !hasGemini && (
+            {configuredCount === 0 && !hasGemini && (
               <span className="ml-0.5 hidden rounded bg-gold/20 px-1 py-[1px] text-[9px] sm:inline">
                 待配置
               </span>
