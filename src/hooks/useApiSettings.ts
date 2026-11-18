@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import type { ApiSettings, ProviderConfig, ProviderId } from '@/types'
-import { DEFAULT_GEMINI_MODEL } from '@/lib/gemini'
+import type { AiRoutingMode, ApiSettings, ProviderConfig, ProviderId } from '@/types'
 import { PROVIDER_IDS, isProviderConfigured } from '@/lib/market/registry'
 
 /** v2 结构：providers 覆盖全部行情引擎；v1 的 twelveDataKey 会自动迁移 */
 const STORAGE_KEY = 'apex-terminal:api-settings:v2'
 const LEGACY_KEY = 'apex-terminal:api-settings:v1'
+
+/** 历史遗留的单一模型值，迁移时视为「未设置自定义覆盖」 */
+const LEGACY_MODEL_VALUES = new Set([
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
+  'gemini-2.5-flash-lite',
+  'gemini-flash-latest',
+])
 
 function emptyProviders(): Record<ProviderId, ProviderConfig> {
   const out = {} as Record<ProviderId, ProviderConfig>
@@ -16,8 +23,13 @@ function emptyProviders(): Record<ProviderId, ProviderConfig> {
 
 export const DEFAULT_API_SETTINGS: ApiSettings = {
   geminiKey: '',
-  geminiModel: DEFAULT_GEMINI_MODEL,
+  geminiModel: '',
+  aiRouting: 'auto',
   providers: emptyProviders(),
+}
+
+function readRouting(value: unknown): AiRoutingMode {
+  return value === 'pro' || value === 'flash' || value === 'lite' ? value : 'auto'
 }
 
 function read(): ApiSettings {
@@ -41,12 +53,13 @@ function read(): ApiSettings {
       // v1 → v2 迁移：旧 Twelve Data Key 归入 providers.twelvedata
       providers.twelvedata = { apiKey: parsed.twelveDataKey, secretKey: '' }
     }
+    // 旧版单一模型字段：若为历史默认值则清空，交由三级路由自动决定
+    const legacyModel = typeof parsed.geminiModel === 'string' ? parsed.geminiModel.trim() : ''
+    const geminiModel = LEGACY_MODEL_VALUES.has(legacyModel) ? '' : legacyModel
     return {
       geminiKey: typeof parsed.geminiKey === 'string' ? parsed.geminiKey : '',
-      geminiModel:
-        typeof parsed.geminiModel === 'string' && parsed.geminiModel.trim()
-          ? parsed.geminiModel
-          : DEFAULT_GEMINI_MODEL,
+      geminiModel,
+      aiRouting: readRouting(parsed.aiRouting),
       providers,
     }
   } catch {

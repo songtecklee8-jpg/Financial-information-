@@ -4,7 +4,7 @@ import { Bot, Loader2, Lock, Send, Sparkles, Trash2, X } from 'lucide-react'
 import type { ChatMessage, Security, ValuationResult } from '@/types'
 import { cn } from '@/lib/cn'
 import { formatPercent } from '@/lib/format'
-import { localChatFallback, runChat } from '@/lib/gemini'
+import { localChatFallback, modelDisplayName, runChat, type AiRoute } from '@/lib/gemini'
 import type { AiContextInput } from '@/lib/aiContext'
 
 interface AiChatDockProps {
@@ -13,7 +13,7 @@ interface AiChatDockProps {
   aiInput: AiContextInput
   hasGemini: boolean
   apiKey: string
-  model: string
+  route: AiRoute
   onOpenSettings: () => void
 }
 
@@ -36,13 +36,14 @@ export function AiChatDock({
   aiInput,
   hasGemini,
   apiKey,
-  model,
+  route,
   onOpenSettings,
 }: AiChatDockProps) {
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
+  const [usedModel, setUsedModel] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
@@ -103,7 +104,8 @@ export function AiChatDock({
           },
         ])
       } else {
-        const reply = await runChat(history, aiInput, apiKey, model, controller.signal)
+        const reply = await runChat(history, aiInput, apiKey, route, controller.signal)
+        setUsedModel(reply.model)
         setMessages((prev) => [
           ...prev,
           {
@@ -165,7 +167,12 @@ export function AiChatDock({
               <div className="min-w-0">
                 <div className="font-mono text-[12px] font-semibold text-ink">AI 金融研究助理</div>
                 <div className="truncate font-mono text-[9.5px] text-faint">
-                  {security.symbol} · {hasGemini ? `Gemini · ${model}` : '本地模式'}
+                  {security.symbol} ·{' '}
+                  {hasGemini
+                    ? usedModel
+                      ? `Powered by ${modelDisplayName(usedModel)}`
+                      : 'Gemini 三级路由'
+                    : '本地模式'}
                 </div>
               </div>
             </div>

@@ -174,9 +174,19 @@ export interface ChatMessage {
   degraded?: boolean
 }
 
+/**
+ * AI 模型路由模式。
+ * - auto：智能三级自动分配（Lite 批量翻译 / Flash 即时研判 / Pro 深度复盘）
+ * - pro / flash / lite：手动锁定，全部任务强制使用该层级模型
+ */
+export type AiRoutingMode = 'auto' | 'pro' | 'flash' | 'lite'
+
 export interface ApiSettings {
   geminiKey: string
+  /** 高级：自定义模型覆盖（留空则由三级路由自动决定） */
   geminiModel: string
+  /** AI 模型路由模式 */
+  aiRouting: AiRoutingMode
   /** 各行情引擎的密钥配置（Key + Secret） */
   providers: Record<ProviderId, ProviderConfig>
 }

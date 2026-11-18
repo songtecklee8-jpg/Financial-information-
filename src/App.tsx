@@ -18,7 +18,7 @@ import { useMacro } from '@/hooks/useMacro'
 import { useNews } from '@/hooks/useNews'
 import { useSecuritySnapshot } from '@/hooks/useSecuritySnapshot'
 import type { AiContextInput } from '@/lib/aiContext'
-import { runVerdictReport } from '@/lib/gemini'
+import { runVerdictReport, aiRoute } from '@/lib/gemini'
 import { providerLabel } from '@/lib/market/registry'
 import { computeValuation } from '@/lib/valuation'
 
@@ -83,7 +83,7 @@ export default function App() {
     aiAbortRef.current = controller
     setAiRunning(true)
     setAiError(null)
-    runVerdictReport(aiInput, api.settings.geminiKey, api.settings.geminiModel, controller.signal)
+    runVerdictReport(aiInput, api.settings.geminiKey, aiRoute(api.settings, 'flash'), controller.signal)
       .then((verdict) => {
         if (controller.signal.aborted) return
         setAiVerdict(verdict)
@@ -95,19 +95,19 @@ export default function App() {
       .finally(() => {
         if (!controller.signal.aborted) setAiRunning(false)
       })
-  }, [api.hasGemini, api.settings.geminiKey, api.settings.geminiModel, aiInput, aiRunning])
+  }, [api.hasGemini, api.settings, aiInput, aiRunning])
 
   // 配置 Gemini Key 后自动运行一次深度诊断
   const autoRunRef = useRef<string | null>(null)
   useEffect(() => {
     if (!api.hasGemini) return
-    const token = `${symbol}:${api.settings.geminiModel}`
+    const token = `${symbol}:${api.settings.aiRouting}:${api.settings.geminiModel}`
     if (autoRunRef.current === token) return
     autoRunRef.current = token
     runAiDiagnosis()
     // runAiDiagnosis 依赖 aiInput，切换标的后由下方 effect 触发
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api.hasGemini, symbol, api.settings.geminiModel])
+  }, [api.hasGemini, symbol, api.settings.aiRouting, api.settings.geminiModel])
 
   const openSettings = useCallback(() => setSettingsOpen(true), [])
 
@@ -203,7 +203,7 @@ export default function App() {
         aiInput={aiInput}
         hasGemini={api.hasGemini}
         apiKey={api.settings.geminiKey}
-        model={api.settings.geminiModel}
+        route={aiRoute(api.settings, 'flash')}
         onOpenSettings={openSettings}
       />
 

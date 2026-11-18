@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Eye, EyeOff, ExternalLink, LoaderCircle, PlugZap, ShieldCheck } from 'lucide-react'
 
-import type { ApiSettings, ProviderConfig, ProviderHealth, ProviderId } from '@/types'
+import type {
+  AiRoutingMode,
+  ApiSettings,
+  ProviderConfig,
+  ProviderHealth,
+  ProviderId,
+} from '@/types'
 import { Modal } from '@/components/ui/Modal'
-import { DEFAULT_GEMINI_MODEL } from '@/lib/gemini'
+import { TIER_LABEL, TIER_MODEL, TIER_ORDER, TIER_ROLE } from '@/lib/gemini'
 import { DEFAULT_API_SETTINGS } from '@/hooks/useApiSettings'
 import { useProviderStatuses } from '@/hooks/useProviderStatuses'
 import { cn } from '@/lib/cn'
@@ -18,10 +24,21 @@ interface ApiSettingsModalProps {
   onReset: () => void
 }
 
+const ROUTING_OPTIONS: Array<{ key: AiRoutingMode; title: string; desc: string }> = [
+  {
+    key: 'auto',
+    title: '智能三级自动分配（推荐）',
+    desc: 'Lite 翻译 + Flash 概率分析 + Pro 深度复盘',
+  },
+  { key: 'pro', title: '强制全部使用 Gemini 2.5 Pro', desc: '全部任务走旗舰模型，推理最强、配额消耗最高' },
+  { key: 'flash', title: '强制全部使用 Gemini 2.5 Flash', desc: '全部任务走均衡主力模型' },
+  { key: 'lite', title: '强制全部使用 Flash-Lite', desc: '全部任务走超轻量模型，最省配额' },
+]
+
 const MODEL_SUGGESTIONS = [
-  'gemini-2.5-flash',
   'gemini-2.5-pro',
-  'gemini-2.0-flash',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
   'gemini-flash-latest',
 ]
 
@@ -285,7 +302,8 @@ export function ApiSettingsModal({
                 }
                 onSave({
                   geminiKey: draft.geminiKey.trim(),
-                  geminiModel: draft.geminiModel.trim() || DEFAULT_GEMINI_MODEL,
+                  geminiModel: draft.geminiModel.trim(),
+                  aiRouting: draft.aiRouting,
                   providers,
                 })
                 onClose()
@@ -309,31 +327,107 @@ export function ApiSettingsModal({
           </p>
         </div>
 
-        {/* Gemini（AI 翻译 + 跨市场推演） */}
+        {/* Gemini（AI 三级模型路由 + 翻译 + 跨市场推演 + 交易复盘） */}
         <div className="rounded-xl border border-gold/25 bg-gold/[0.04] p-3">
           <div className="mb-2 flex items-center gap-2">
             <span className="font-mono text-[11px] font-semibold tracking-[0.14em] text-gold uppercase">
-              Gemini · AI 翻译与跨市场推演
+              Gemini · AI 模型路由与智能分析
             </span>
           </div>
-          <div className="space-y-3">
+          <div className="space-y-3.5">
             <TextField
               label="Google Gemini API Key"
-              hint="用于财经新闻的全自动华文翻译，以及点击新闻时的「AI 跨市场深度推演」（五大资产涨跌概率）。"
+              hint="用于新闻华文翻译、跨市场涨跌概率推演、个股诊断与交易复盘；模型将按下方路由模式自动分配。"
               value={draft.geminiKey}
               onChange={(value) => setDraft((current) => ({ ...current, geminiKey: value }))}
               placeholder="例如 AIzaSyD-xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
               docsUrl="https://aistudio.google.com/app/apikey"
               docsLabel="前往 Google AI Studio"
             />
+
+            {/* AI 模型路由模式 */}
             <div>
               <label className="font-mono text-[11px] tracking-[0.1em] text-dim uppercase">
-                Gemini 模型
+                AI 模型路由模式
+              </label>
+              <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                {ROUTING_OPTIONS.map((option) => {
+                  const active = draft.aiRouting === option.key
+                  return (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() =>
+                        setDraft((current) => ({ ...current, aiRouting: option.key }))
+                      }
+                      className={cn(
+                        'rounded-lg border px-2.5 py-2 text-left transition',
+                        active
+                          ? 'border-gold/55 bg-gold/12'
+                          : 'border-line bg-void/50 hover:border-line-2',
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={cn(
+                            'size-2.5 shrink-0 rounded-full border',
+                            active ? 'border-gold bg-gold' : 'border-faint',
+                          )}
+                        />
+                        <span
+                          className={cn(
+                            'font-mono text-[11px] font-medium',
+                            active ? 'text-gold' : 'text-dim',
+                          )}
+                        >
+                          {option.title}
+                        </span>
+                        {option.key === 'auto' && (
+                          <span className="rounded border border-bull/40 bg-bull/10 px-1 py-[1px] font-mono text-[9px] text-bull">
+                            默认
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-[10.5px] leading-relaxed text-faint">{option.desc}</p>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* 三级模型职责与降级链 */}
+              <div className="mt-2 rounded-lg border border-line bg-void/40 p-2.5">
+                <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.14em] text-faint uppercase">
+                  三级模型分工
+                </div>
+                <ul className="space-y-1">
+                  {[...TIER_ORDER].reverse().map((tier) => (
+                    <li key={tier} className="flex flex-wrap items-baseline gap-x-2 text-[10.5px]">
+                      <span className="font-mono text-[11px] font-medium text-ink">
+                        {TIER_LABEL[tier]}
+                      </span>
+                      <span className="font-mono text-[9.5px] text-faint">{TIER_MODEL[tier]}</span>
+                      <span className="text-faint">{TIER_ROLE[tier]}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1.5 border-t border-line/60 pt-1.5 text-[10px] leading-relaxed text-faint">
+                  限流（429）或模型不可用时自动无缝降级：
+                  <span className="font-mono text-dim"> Pro → Flash → Flash-Lite</span>
+                  ，绝不中断体验。
+                </p>
+              </div>
+            </div>
+
+            {/* 高级：自定义模型覆盖 */}
+            <div>
+              <label className="font-mono text-[11px] tracking-[0.1em] text-dim uppercase">
+                自定义模型覆盖（高级 · 可选）
               </label>
               <input
                 list="gemini-models"
                 value={draft.geminiModel}
                 spellCheck={false}
+                placeholder="留空则由上方路由模式自动决定"
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, geminiModel: event.target.value }))
                 }
@@ -345,8 +439,7 @@ export function ApiSettingsModal({
                 ))}
               </datalist>
               <p className="mt-1.5 text-[11px] leading-relaxed text-faint">
-                推荐 <span className="font-mono text-dim">gemini-2.5-flash</span>；若模型不可用，系统会自动回退到{' '}
-                <span className="font-mono text-dim">gemini-flash-latest</span>。
+                填写后将作为全部任务的优先模型，失败时仍自动向下降级；留空则完全交由三级路由分配。
               </p>
             </div>
           </div>

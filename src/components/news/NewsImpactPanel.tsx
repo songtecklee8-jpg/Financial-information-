@@ -17,7 +17,7 @@ import { Modal } from '@/components/ui/Modal'
 import { Badge } from '@/components/ui/Badge'
 import { cn } from '@/lib/cn'
 import { formatRelativeTime } from '@/lib/format'
-import { runNewsImpact } from '@/lib/gemini'
+import { aiRoute, modelDisplayName, runNewsImpact } from '@/lib/gemini'
 
 interface NewsImpactPanelProps {
   article: NewsArticle
@@ -105,7 +105,7 @@ export function NewsImpactPanel({ article, settings, onClose }: NewsImpactPanelP
       abortRef.current = controller
       setLoading(true)
       setImpact(null)
-      runNewsImpact(article, settings.geminiKey, settings.geminiModel, controller.signal)
+      runNewsImpact(article, settings.geminiKey, aiRoute(settings, 'flash'), controller.signal)
         .then((result) => {
           if (controller.signal.aborted) return
           setImpact(result)
@@ -118,7 +118,7 @@ export function NewsImpactPanel({ article, settings, onClose }: NewsImpactPanelP
           if (!controller.signal.aborted) setLoading(false)
         })
     },
-    [article, settings.geminiKey, settings.geminiModel],
+    [article, settings.geminiKey, settings.aiRouting, settings.geminiModel, settings],
   )
 
   // 打开即自动运行一次推演
@@ -153,7 +153,11 @@ export function NewsImpactPanel({ article, settings, onClose }: NewsImpactPanelP
                 {hasGemini ? 'GEMINI 推演' : '本地推演'}
               </Badge>
             )}
-            {impact && <span>模型 {impact.model}</span>}
+            {impact && (
+              <span title={`实际执行模型：${impact.model}`}>
+                Powered by {modelDisplayName(impact.model)}
+              </span>
+            )}
             {impact && <span>置信度 {impact.confidence}%</span>}
           </span>
           <span className="flex items-center gap-2">

@@ -18,7 +18,7 @@ import { NewsImpactPanel } from '@/components/news/NewsImpactPanel'
 import { useNews } from '@/hooks/useNews'
 import { cn } from '@/lib/cn'
 import { formatRelativeTime } from '@/lib/format'
-import { translateArticles } from '@/lib/gemini'
+import { translateArticles, aiRoute, modelDisplayName } from '@/lib/gemini'
 import { NEWS_SOURCES, sourceMeta } from '@/lib/news'
 
 interface NewsHubPageProps {
@@ -71,8 +71,9 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
   const [selected, setSelected] = useState<NewsArticle | null>(null)
   const [showOriginal, setShowOriginal] = useState<Record<string, boolean>>({})
 
-  // 华文翻译结果（Gemini）；未配置 Key 时保持 null，直接显示原文
+  // 华文翻译结果（Gemini · Lite 层级）；未配置 Key 时保持 null，直接显示原文
   const [translated, setTranslated] = useState<NewsArticle[] | null>(null)
+  const [translatedModel, setTranslatedModel] = useState<string | null>(null)
   const [translating, setTranslating] = useState(false)
   const translateAbort = useRef<AbortController | null>(null)
 
@@ -89,26 +90,37 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
       const result = await translateArticles(
         news.articles,
         settings.geminiKey,
-        settings.geminiModel,
+        aiRoute(settings, 'lite'),
         controller.signal,
       )
-      if (!controller.signal.aborted) setTranslated(result)
+      if (!controller.signal.aborted) {
+        setTranslated(result.articles)
+        setTranslatedModel(result.model)
+      }
     } catch {
       // 翻译失败：保留原文
     } finally {
       if (!controller.signal.aborted) setTranslating(false)
     }
-  }, [hasGemini, news.articles, settings.geminiKey, settings.geminiModel])
+  }, [
+    hasGemini,
+    news.articles,
+    settings.geminiKey,
+    settings.aiRouting,
+    settings.geminiModel,
+    settings,
+  ])
 
   // 新闻更新后自动翻译（仅英文源）
   useEffect(() => {
     setTranslated(null)
+    setTranslatedModel(null)
     if (!hasGemini) return
     const pending = news.articles.some((item) => item.lang === 'en' && item.translation !== 'done')
     if (!pending) return
     autoTranslate()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [news.articles, hasGemini, settings.geminiModel])
+  }, [news.articles, hasGemini, settings.aiRouting, settings.geminiModel])
 
   useEffect(() => () => translateAbort.current?.abort(), [])
 
@@ -190,6 +202,9 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
             ) : (
               <span className="flex items-center gap-1.5 text-bull">
                 <Languages className="size-3" /> 华文翻译已就绪（{translatedCount}/{articles.length} 条）
+                {translatedModel && (
+                  <span className="text-faint">· Powered by {modelDisplayName(translatedModel)}</span>
+                )}
               </span>
             )
           ) : (

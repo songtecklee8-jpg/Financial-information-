@@ -1,5 +1,7 @@
 import type {
+  AiRoutingMode,
   AiVerdict,
+  ApiSettings,
   AssetImpact,
   AssetKey,
   ChatMessage,
@@ -25,8 +27,93 @@ import type { PaperProfile, ProfileStats, TradeReview } from '@/types'
 /** Gemini 传输层 */
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
-const FALLBACK_MODEL = 'gemini-flash-latest'
 const API_ROOT = 'https://generativelanguage.googleapis.com/v1beta/models'
+
+// ---------------------------------------------------------------------------
+// 三级 AI 模型路由（Lite / Flash / Pro）+ 无缝降级熔断
+// ---------------------------------------------------------------------------
+
+/** AI 能力层级 */
+export type AiTier = 'lite' | 'flash' | 'pro'
+
+/** 由弱到强的层级顺序，用于向下降级 */
+export const TIER_ORDER: AiTier[] = ['lite', 'flash', 'pro']
+
+/** 各层级对应的 Gemini 模型 */
+export const TIER_MODEL: Record<AiTier, string> = {
+  lite: 'gemini-2.5-flash-lite',
+  flash: 'gemini-2.5-flash',
+  pro: 'gemini-2.5-pro',
+}
+
+/** 层级展示名 */
+export const TIER_LABEL: Record<AiTier, string> = {
+  lite: 'Gemini 2.5 Flash-Lite',
+  flash: 'Gemini 2.5 Flash',
+  pro: 'Gemini 2.5 Pro',
+}
+
+/** 层级职责说明 */
+export const TIER_ROLE: Record<AiTier, string> = {
+  lite: '高频批量吞吐（新闻华文翻译与情绪标签）',
+  flash: '即时交互研判（五大资产概率仪表盘、个股量化诊断）',
+  pro: '旗舰深度推理（多账户交易复盘、宏观周期推演）',
+}
+
+/** 终极兜底别名：当全部层级模型均不可用时的最后尝试 */
+const LAST_RESORT_MODEL = 'gemini-flash-latest'
+
+/** 单次 AI 调用的路由参数 */
+export interface AiRoute {
+  /** 路由模式：auto 走 tier，其余为手动锁定 */
+  mode: AiRoutingMode
+  /** 任务所需层级（auto 模式下生效） */
+  tier: AiTier
+  /** 高级：自定义模型覆盖（优先级最高） */
+  override?: string
+}
+
+/** 根据设置与任务层级构造路由参数 */
+export function aiRoute(settings: ApiSettings, tier: AiTier): AiRoute {
+  return {
+    mode: settings.aiRouting ?? 'auto',
+    tier,
+    override: settings.geminiModel?.trim() || undefined,
+  }
+}
+
+/** 手动锁定模式解析为起始层级 */
+function resolveStartTier(route: AiRoute): AiTier {
+  if (route.mode === 'pro' || route.mode === 'flash' || route.mode === 'lite') return route.mode
+  return route.tier
+}
+
+/**
+ * 生成候选模型链：从目标层级开始逐级向下降级。
+ * Pro → Flash → Flash-Lite，确保任何一级限流 / 不可用时都不会中断。
+ */
+export function modelChain(route: AiRoute): string[] {
+  const chain: string[] = []
+  const push = (model: string) => {
+    if (model && !chain.includes(model)) chain.push(model)
+  }
+  if (route.override) push(route.override)
+  const startIndex = TIER_ORDER.indexOf(resolveStartTier(route))
+  for (let i = startIndex; i >= 0; i -= 1) push(TIER_MODEL[TIER_ORDER[i]])
+  push(LAST_RESORT_MODEL)
+  return chain
+}
+
+/** 把模型 id 转为友好展示名，用于分析卡片角标 */
+export function modelDisplayName(model: string): string {
+  const value = (model ?? '').toLowerCase()
+  if (value.includes('2.5-pro')) return 'Gemini 2.5 Pro'
+  if (value.includes('2.5-flash-lite')) return 'Gemini 2.5 Flash-Lite'
+  if (value.includes('2.5-flash')) return 'Gemini 2.5 Flash'
+  if (value.includes('2.0-flash')) return 'Gemini 2.0 Flash'
+  return 'Gemini Flash'
+}
+
 
 export class GeminiError extends Error {
   readonly code?: number
@@ -61,7 +148,8 @@ export interface GeminiContent {
 
 interface GenerateOptions {
   apiKey: string
-  model?: string
+  /** 三级路由参数（决定主模型与降级链） */
+  route: AiRoute
   systemInstruction?: string
   contents: GeminiContent[]
   jsonSchema?: Record<string, unknown>
@@ -152,22 +240,46 @@ async function callModel(options: GenerateOptions, model: string): Promise<strin
   return extractText(payload ?? {})
 }
 
+/** API Key 本身无效时降级无意义，直接终止 */
+function isFatalKeyError(error: unknown): boolean {
+  return (
+    error instanceof GeminiError &&
+    error.code === 400 &&
+    /api key|API_KEY_INVALID/i.test(error.message)
+  )
+}
+
+/**
+ * 按候选链顺序尝试模型：高层级限流（429）/ 不可用（404）/ 网络异常时，
+ * 自动无缝降级到下一级模型，绝不向用户抛出中断。
+ */
+async function callWithFallback(
+  options: GenerateOptions,
+  chain: string[],
+): Promise<{ text: string; model: string }> {
+  let lastError: unknown
+  for (const model of chain) {
+    try {
+      return { text: await callModel(options, model), model }
+    } catch (error) {
+      lastError = error
+      // 用户主动中止 / API Key 无效：立即抛出，不再降级
+      if (options.signal?.aborted || isFatalKeyError(error)) throw error
+      // 其余情况（429 / 404 / 5xx / 网络）继续向下级模型降级
+    }
+  }
+  throw lastError instanceof Error ? lastError : new GeminiError('Gemini 请求失败')
+}
+
+/**
+ * 调用 Gemini，自动按三级路由与降级链执行。
+ * 返回实际命中的模型 id，供分析卡片显示「Powered by …」角标。
+ */
 export async function generateText(options: GenerateOptions): Promise<{ text: string; model: string }> {
   if (!options.apiKey?.trim()) {
     throw new GeminiError('未配置 Gemini API Key', undefined, '请点击右上角「API 设置」填入 Key')
   }
-  const primary = options.model?.trim() || DEFAULT_GEMINI_MODEL
-  try {
-    return { text: await callModel(options, primary), model: primary }
-  } catch (error) {
-    const isMissingModel =
-      error instanceof GeminiError &&
-      (error.code === 404 || /not found|unsupported|does not exist/i.test(error.message))
-    if (isMissingModel && primary !== FALLBACK_MODEL) {
-      return { text: await callModel(options, FALLBACK_MODEL), model: FALLBACK_MODEL }
-    }
-    throw error
-  }
+  return callWithFallback(options, modelChain(options.route))
 }
 
 function parseJsonBlock<T>(text: string): T {
@@ -189,12 +301,12 @@ function normalizeVerdict(value: unknown): Verdict {
 export async function runVerdictReport(
   input: AiContextInput,
   apiKey: string,
-  model: string,
+  route: AiRoute,
   signal?: AbortSignal,
 ): Promise<AiVerdict> {
   const { text, model: usedModel } = await generateText({
     apiKey,
-    model,
+    route,
     systemInstruction: VERDICT_INSTRUCTION,
     contents: [{ role: 'user', parts: [{ text: buildVerdictPayload(input) }] }],
     jsonSchema: VERDICT_SCHEMA,
@@ -222,7 +334,7 @@ export async function runChat(
   history: ChatMessage[],
   input: AiContextInput,
   apiKey: string,
-  model: string,
+  route: AiRoute,
   signal?: AbortSignal,
 ): Promise<{ text: string; model: string }> {
   const contents: GeminiContent[] = [
@@ -245,7 +357,7 @@ export async function runChat(
   ]
   return generateText({
     apiKey,
-    model,
+    route,
     systemInstruction: buildChatSystemInstruction(),
     contents,
     temperature: 0.5,
@@ -264,13 +376,14 @@ export function localChatFallback(): string {
 // ---------------------------------------------------------------------------
 
 const TRANSLATE_INSTRUCTION = [
-  '你是资深财经新闻翻译，负责把英文财经资讯翻译成流畅、专业的简体中文。',
+  '你是资深财经新闻翻译，负责把英文财经资讯翻译成流畅、专业的简体中文，并给出多空情绪标签。',
   '要求：',
   '1. 保留专有名词、公司名、股票代码、数字与百分比，不要意译品牌与机构名称；',
   '2. 使用金融行业通用术语（如 Fed→美联储、Treasury yield→国债收益率、REITs→REITs）；',
   '3. 标题简洁有力（不超过 40 字），摘要通顺完整；',
-  '4. 逐条返回，id 必须与输入完全一致，不得新增或遗漏条目；',
-  '5. 只输出 JSON，不要任何解释性文字。',
+  '4. 为每条新闻判断市场情绪：bullish（利好）/ bearish（利空）/ neutral（中性）；',
+  '5. 逐条返回，id 必须与输入完全一致，不得新增或遗漏条目；',
+  '6. 只输出 JSON，不要任何解释性文字。',
 ].join('\n')
 
 const TRANSLATE_SCHEMA: Record<string, unknown> = {
@@ -284,8 +397,13 @@ const TRANSLATE_SCHEMA: Record<string, unknown> = {
           id: { type: 'STRING', description: '与输入条目一致的 id' },
           titleZh: { type: 'STRING', description: '简体中文标题' },
           summaryZh: { type: 'STRING', description: '简体中文摘要' },
+          sentiment: {
+            type: 'STRING',
+            enum: ['bullish', 'bearish', 'neutral'],
+            description: '多空情绪标签',
+          },
         },
-        required: ['id', 'titleZh', 'summaryZh'],
+        required: ['id', 'titleZh', 'summaryZh', 'sentiment'],
       },
     },
   },
@@ -296,25 +414,38 @@ interface TranslateRow {
   id?: string
   titleZh?: string
   summaryZh?: string
+  sentiment?: string
 }
 
 /** 单批翻译的条目数（控制单次请求 token 量） */
 const TRANSLATE_BATCH = 20
 
+function normalizeSentiment(value: unknown): NewsArticle['sentiment'] {
+  const raw = String(value ?? '').toLowerCase()
+  if (raw.includes('bull')) return 'bullish'
+  if (raw.includes('bear')) return 'bearish'
+  return 'neutral'
+}
+
 /**
- * 批量英译华：把英文财经新闻翻译为流畅华文，写入 titleZh / summaryZh 并把
- * translation 标记为 done。未配置 Key 或某批次失败时，对应条目保留原文，界面永不空白。
+ * 批量英译华：把英文财经新闻翻译为流畅华文并生成多空情绪标签，写入
+ * titleZh / summaryZh / sentiment 并把 translation 标记为 done。
+ * 未配置 Key 或某批次失败时，对应条目保留原文，界面永不空白。
  */
 export async function translateArticles(
   articles: NewsArticle[],
   apiKey: string,
-  model: string,
+  route: AiRoute,
   signal?: AbortSignal,
-): Promise<NewsArticle[]> {
+): Promise<{ articles: NewsArticle[]; model: string | null }> {
   const pending = articles.filter((article) => article.lang === 'en' && article.translation !== 'done')
-  if (!apiKey?.trim() || pending.length === 0) return articles
+  if (!apiKey?.trim() || pending.length === 0) return { articles, model: null }
 
-  const translated = new Map<string, { titleZh: string; summaryZh: string }>()
+  const translated = new Map<
+    string,
+    { titleZh: string; summaryZh: string; sentiment: NewsArticle['sentiment'] }
+  >()
+  let usedModel: string | null = null
   for (let i = 0; i < pending.length; i += TRANSLATE_BATCH) {
     const chunk = pending.slice(i, i + TRANSLATE_BATCH)
     const payload = JSON.stringify(
@@ -325,9 +456,9 @@ export async function translateArticles(
       })),
     )
     try {
-      const { text } = await generateText({
+      const { text, model } = await generateText({
         apiKey,
-        model,
+        route,
         systemInstruction: TRANSLATE_INSTRUCTION,
         contents: [{ role: 'user', parts: [{ text: payload }] }],
         jsonSchema: TRANSLATE_SCHEMA,
@@ -335,12 +466,19 @@ export async function translateArticles(
         maxOutputTokens: 4096,
         signal,
       })
+      usedModel = model
       const parsed = parseJsonBlock<{ items?: TranslateRow[] }>(text)
       for (const row of parsed.items ?? []) {
         if (!row.id) continue
         const titleZh = (row.titleZh ?? '').trim()
         const summaryZh = (row.summaryZh ?? '').trim()
-        if (titleZh) translated.set(row.id, { titleZh, summaryZh: summaryZh || titleZh })
+        if (titleZh) {
+          translated.set(row.id, {
+            titleZh,
+            summaryZh: summaryZh || titleZh,
+            sentiment: normalizeSentiment(row.sentiment),
+          })
+        }
       }
     } catch (error) {
       // 用户主动中止：向上抛；单批翻译失败：跳过该批，保留原文
@@ -348,12 +486,21 @@ export async function translateArticles(
     }
   }
 
-  if (translated.size === 0) return articles
-  return articles.map((article) => {
-    const hit = translated.get(article.id)
-    if (!hit) return article
-    return { ...article, titleZh: hit.titleZh, summaryZh: hit.summaryZh, translation: 'done' as const }
-  })
+  if (translated.size === 0) return { articles, model: usedModel }
+  return {
+    articles: articles.map((article) => {
+      const hit = translated.get(article.id)
+      if (!hit) return article
+      return {
+        ...article,
+        titleZh: hit.titleZh,
+        summaryZh: hit.summaryZh,
+        sentiment: hit.sentiment,
+        translation: 'done' as const,
+      }
+    }),
+    model: usedModel,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -504,14 +651,14 @@ function normalizeImpact(
 export async function runNewsImpact(
   article: NewsArticle,
   apiKey: string,
-  model: string,
+  route: AiRoute,
   signal?: AbortSignal,
 ): Promise<NewsImpact> {
   if (!apiKey?.trim()) return localNewsImpact(article)
   try {
     const { text, model: usedModel } = await generateText({
       apiKey,
-      model,
+      route,
       systemInstruction: IMPACT_INSTRUCTION,
       contents: [{ role: 'user', parts: [{ text: buildImpactPayload(article) }] }],
       jsonSchema: IMPACT_SCHEMA,
@@ -566,14 +713,14 @@ export async function runTradeReview(
   profile: PaperProfile,
   stats: ProfileStats,
   apiKey: string,
-  model: string,
+  route: AiRoute,
   signal?: AbortSignal,
 ): Promise<TradeReview> {
   if (!apiKey?.trim()) return localTradeReview(profile, stats)
   try {
     const { text, model: usedModel } = await generateText({
       apiKey,
-      model,
+      route,
       systemInstruction: TRADE_REVIEW_INSTRUCTION,
       contents: [{ role: 'user', parts: [{ text: buildTradeReviewPayload(profile, stats) }] }],
       jsonSchema: TRADE_REVIEW_SCHEMA,

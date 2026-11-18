@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Gauge } from '@/components/ui/Gauge'
 import { cn } from '@/lib/cn'
 import { formatDateTime } from '@/lib/format'
+import { modelDisplayName } from '@/lib/gemini'
 import { VERDICT_META } from '@/lib/valuation'
 
 interface AiVerdictCardProps {
@@ -54,7 +55,7 @@ export function AiVerdictCard({
                 AI 综合价值裁决
               </span>
               <Badge tone={isAi ? 'gold' : 'neutral'} dot={isAi}>
-                {isAi ? `Gemini · ${verdict.model}` : '本地量化引擎'}
+                {isAi ? `Powered by ${modelDisplayName(verdict.model)}` : '本地量化引擎'}
               </Badge>
             </div>
             <div className="mt-1.5 flex flex-wrap items-center gap-2">

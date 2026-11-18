@@ -13,14 +13,14 @@ import { Badge } from '@/components/ui/Badge'
 import { MeterBar } from '@/components/ui/MeterBar'
 import { cn } from '@/lib/cn'
 import { formatDateTime } from '@/lib/format'
-import { runTradeReview } from '@/lib/gemini'
+import { modelDisplayName, runTradeReview, type AiRoute } from '@/lib/gemini'
 
 interface TradeReviewPanelProps {
   profile: PaperProfile
   stats: ProfileStats
   hasGemini: boolean
   apiKey: string
-  model: string
+  route: AiRoute
   onOpenSettings: () => void
 }
 
@@ -29,7 +29,7 @@ export function TradeReviewPanel({
   stats,
   hasGemini,
   apiKey,
-  model,
+  route,
   onOpenSettings,
 }: TradeReviewPanelProps) {
   const [review, setReview] = useState<TradeReview | null>(null)
@@ -53,7 +53,7 @@ export function TradeReviewPanel({
     abortRef.current = controller
     setRunning(true)
     setError(null)
-    runTradeReview(profile, stats, apiKey, model, controller.signal)
+    runTradeReview(profile, stats, apiKey, route, controller.signal)
       .then((result) => {
         if (controller.signal.aborted) return
         setReview(result)
@@ -65,7 +65,7 @@ export function TradeReviewPanel({
       .finally(() => {
         if (!controller.signal.aborted) setRunning(false)
       })
-  }, [profile, stats, apiKey, model])
+  }, [profile, stats, apiKey, route])
 
   return (
     <section className="panel hairline-top flex min-w-0 flex-col">
@@ -133,7 +133,9 @@ export function TradeReviewPanel({
               {review.degraded ? (
                 <Badge tone="neutral" title="未配置 Gemini Key，由本地量化引擎生成">LOCAL ENGINE</Badge>
               ) : (
-                <Badge tone="iris">{review.model}</Badge>
+                <Badge tone="iris" title={`实际执行模型：${review.model}`}>
+                  Powered by {modelDisplayName(review.model)}
+                </Badge>
               )}
             </div>
 
