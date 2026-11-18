@@ -1,4 +1,4 @@
-import { Activity, KeyRound, LayoutDashboard, Newspaper, Radio } from 'lucide-react'
+import { Activity, Banknote, ChartCandlestick, KeyRound, Newspaper, Radio } from 'lucide-react'
 
 import { Badge } from '@/components/ui/Badge'
 import { SearchBar } from '@/components/SearchBar'
@@ -6,12 +6,13 @@ import { useClock } from '@/hooks/useClock'
 import { cn } from '@/lib/cn'
 import { formatClock } from '@/lib/format'
 
-/** 顶部导航的两个主视图 */
-export type AppView = 'dashboard' | 'news'
+/** 顶部导航的三个主页面（互不挤压的独立分区） */
+export type AppView = 'equity' | 'news' | 'paper'
 
-const NAV_ITEMS: Array<{ key: AppView; label: string; icon: typeof LayoutDashboard }> = [
-  { key: 'dashboard', label: '主看板', icon: LayoutDashboard },
-  { key: 'news', label: '财经新闻中心', icon: Newspaper },
+const NAV_ITEMS: Array<{ key: AppView; label: string; hint: string; icon: typeof ChartCandlestick }> = [
+  { key: 'equity', label: '股票', hint: '实时行情看板 · 多引擎数据源切换 · 全周期 K 线 · 个股量化诊断', icon: ChartCandlestick },
+  { key: 'news', label: '财经新闻', hint: '全球与马股实时新闻中心 · 华文翻译 · 跨市场涨跌概率预测', icon: Newspaper },
+  { key: 'paper', label: '模拟交易', hint: '实时盘面仿真交易 · 多策略账户（Profile）管理 · AI 交易复盘', icon: Banknote },
 ]
 
 interface TopBarProps {
@@ -83,7 +84,7 @@ export function TopBar({
           </div>
         </div>
 
-        {/* 主导航 */}
+        {/* 主导航：三个独立页面分区 */}
         <nav className="flex shrink-0 items-center gap-1">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon
@@ -93,15 +94,16 @@ export function TopBar({
                 key={item.key}
                 type="button"
                 onClick={() => onNavigate(item.key)}
+                title={item.hint}
                 className={cn(
-                  'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-[11px] transition',
+                  'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-[12px] font-medium whitespace-nowrap transition',
                   active
                     ? 'border-gold/50 bg-gold/12 text-gold'
                     : 'border-transparent text-dim hover:border-line-2 hover:text-ink',
                 )}
               >
                 <Icon className="size-3.5" />
-                <span className="hidden sm:inline">{item.label}</span>
+                <span>{item.label}</span>
               </button>
             )
           })}

@@ -17,7 +17,10 @@ import {
   type AiContextInput,
 } from '@/lib/aiContext'
 import { ASSET_KEYS, assetLabel, localNewsImpact } from '@/lib/newsImpact'
+import { RESEARCH_DOCTRINE } from '@/lib/researchDoctrine'
+import { buildTradeReviewPayload, localTradeReview } from '@/lib/trading'
 import { clamp } from '@/lib/format'
+import type { PaperProfile, ProfileStats, TradeReview } from '@/types'
 
 /** Gemini 传输层 */
 
@@ -357,22 +360,23 @@ export async function translateArticles(
 // 财经新闻：AI 跨市场深度推演（五大资产涨跌概率）
 // ---------------------------------------------------------------------------
 
-const IMPACT_INSTRUCTION = [
-  '你是横跨美股、马来西亚（Bursa Malaysia）、债券、房地产、黄金与衍生品的首席宏观策略师。',
-  '针对给定的一条财经新闻，输出结构化、可量化的跨市场推演，全部使用通俗专业的简体中文。',
-  '必须严格遵守：',
-  '1. 强制对以下 5 类资产分别给出判断，缺一不可，顺序固定：',
-  '   equities（股票：需区分美股大盘/科技股与马股 Bursa Malaysia 相关板块）、',
-  '   bonds（债券：美国国债收益率与价格、马来西亚 MGS 政府债券）、',
-  '   realEstate（房地产 / REITs：利率与通胀预期对商业地产及马股/美股 REITs 的冲击）、',
-  '   gold（黄金：避险情绪与美元强弱对现货金价的影响）、',
-  '   volatility（期权与波动率：隐含波动率 IV 升降方向，以及 Call 与 Put 的策略倾向）；',
-  '2. 每类资产给出 up（上涨概率 %，整数）与 down（下跌概率 %，整数），二者相加必须等于 100；',
-  '3. direction 取 bullish（看涨）/ bearish（看跌）/ neutral（震荡）；',
-  '4. driver 为一句话核心驱动逻辑，detail 为细分说明（如美股大盘 / 科技股 / 马股板块）；',
-  '5. confidence 为 0-100 的整数置信度；',
-  '6. 只输出 JSON，不要任何解释性文字。',
-].join('\n')
+const IMPACT_INSTRUCTION = `${RESEARCH_DOCTRINE}
+
+你是横跨美股、马来西亚（Bursa Malaysia）、债券、房地产、黄金与衍生品的首席宏观策略师。
+针对给定的一条财经新闻，输出结构化、可量化的跨市场推演，全部使用通俗专业的简体中文。
+必须严格遵守：
+1. 强制对以下 5 类资产分别给出判断，缺一不可，顺序固定：
+   equities（股票：需区分美股大盘/科技股与马股 Bursa Malaysia 相关板块）、
+   bonds（债券：美国国债收益率与价格、马来西亚 MGS 政府债券）、
+   realEstate（房地产 / REITs：利率与通胀预期对商业地产及马股/美股 REITs 的冲击）、
+   gold（黄金：避险情绪与美元强弱对现货金价的影响）、
+   volatility（期权与波动率：隐含波动率 IV 升降方向，以及 Call 与 Put 的策略倾向）；
+2. 每类资产给出 up（上涨概率 %，整数）与 down（下跌概率 %，整数），二者相加必须等于 100；
+3. direction 取 bullish（看涨）/ bearish（看跌）/ neutral（震荡）；
+4. driver 为一句话核心驱动逻辑，detail 为细分说明（如美股大盘 / 科技股 / 马股板块）；
+5. confidence 为 0-100 的整数置信度；
+6. 传导逻辑须显式引用至少一个历史相似情景（如 1997 亚洲金融风暴、2008 次贷危机、2020 流动性冲击、2022 激进加息）与一个理论框架（DCF / CAPM / MPT / 凯利公式 / Greeks）；
+7. 只输出 JSON，不要任何解释性文字。`
 
 const IMPACT_SCHEMA: Record<string, unknown> = {
   type: 'OBJECT',
@@ -520,6 +524,83 @@ export async function runNewsImpact(
   } catch (error) {
     if (signal?.aborted) throw error
     return localNewsImpact(article)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 模拟交易：AI 账户复盘与诊断
+// ---------------------------------------------------------------------------
+
+const TRADE_REVIEW_INSTRUCTION = `${RESEARCH_DOCTRINE}
+
+你是顶级对冲基金的交易风控主管（Head of Risk & Trading Review），负责对交易员的账户表现做无情但公正的复盘。
+你会收到某个模拟交易账户（Profile）的完整快照：本金、现金、持仓与集中度、成交流水、盈亏比、胜率、最大回撤以及当前市场环境。
+必须输出结构化、可落地的复盘，全部使用简体中文。
+
+输出要求：
+1. headline：一句话总结该账户当前的整体状态（不超过 40 字）。
+2. strengths（做得好的地方）：客观肯定真实亮点，例如仓位控制、顺势交易、止盈执行、风险分散（夏普比率体现）、行业轮动把握、纪律性等；2-4 条，每条 30 字以内。若确实没有亮点，必须诚实说明并给出当前唯一可肯定之处，禁止编造。
+3. improvements（需要改善的地方）：精准指出交易缺陷，例如过度集中单一板块、逆势加仓、缺乏止损纪律、频繁交易损耗、忽视宏观利率风险、追高杀跌等；2-4 条，每条 30 字以内。
+4. riskPlan：给出具体可落地的仓位调整与风控方案。必须包含：基于凯利公式（含半凯利）的目标单笔仓位建议、基于 MPT 的分散化建议、明确的止损 / 止盈规则，并结合当前利率与美元兑令吉（USD/MYR）汇率环境；不超过 200 字。
+5. disciplineScore：0-100 的交易纪律评分（越高越自律）。
+
+注意：所有判断必须引用给定数据中的具体数字；若数据不足（如成交笔数过少），须明确指出「样本不足，结论置信度有限」。只输出 JSON，不要任何解释性文字。`
+
+const TRADE_REVIEW_SCHEMA: Record<string, unknown> = {
+  type: 'OBJECT',
+  properties: {
+    headline: { type: 'STRING', description: '一句话账户状态总结' },
+    strengths: { type: 'ARRAY', items: { type: 'STRING' }, description: '做得好的地方 2-4 条' },
+    improvements: { type: 'ARRAY', items: { type: 'STRING' }, description: '需要改善的地方 2-4 条' },
+    riskPlan: { type: 'STRING', description: '具体可落地的仓位调整与风控方案' },
+    disciplineScore: { type: 'INTEGER', description: '0-100 交易纪律评分' },
+  },
+  required: ['headline', 'strengths', 'improvements', 'riskPlan', 'disciplineScore'],
+}
+
+/**
+ * 对单个模拟交易账户运行 AI 深度复盘。
+ * 未配置 Key 或调用失败时，回退本地启发式复盘（degraded: true）。
+ */
+export async function runTradeReview(
+  profile: PaperProfile,
+  stats: ProfileStats,
+  apiKey: string,
+  model: string,
+  signal?: AbortSignal,
+): Promise<TradeReview> {
+  if (!apiKey?.trim()) return localTradeReview(profile, stats)
+  try {
+    const { text, model: usedModel } = await generateText({
+      apiKey,
+      model,
+      systemInstruction: TRADE_REVIEW_INSTRUCTION,
+      contents: [{ role: 'user', parts: [{ text: buildTradeReviewPayload(profile, stats) }] }],
+      jsonSchema: TRADE_REVIEW_SCHEMA,
+      temperature: 0.4,
+      maxOutputTokens: 2048,
+      signal,
+    })
+    const parsed = parseJsonBlock<Partial<TradeReview>>(text)
+    return {
+      profileId: profile.id,
+      headline: (parsed.headline ?? '').trim() || `${profile.name} 交易复盘`,
+      strengths: Array.isArray(parsed.strengths)
+        ? parsed.strengths.map((item) => String(item).trim()).filter(Boolean).slice(0, 5)
+        : [],
+      improvements: Array.isArray(parsed.improvements)
+        ? parsed.improvements.map((item) => String(item).trim()).filter(Boolean).slice(0, 5)
+        : [],
+      riskPlan: (parsed.riskPlan ?? '').trim(),
+      disciplineScore: Number.isFinite(Number(parsed.disciplineScore))
+        ? clamp(Math.round(Number(parsed.disciplineScore)), 0, 100)
+        : 60,
+      generatedAt: new Date().toISOString(),
+      model: usedModel,
+    }
+  } catch (error) {
+    if (signal?.aborted) throw error
+    return localTradeReview(profile, stats)
   }
 }
 

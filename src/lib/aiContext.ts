@@ -8,6 +8,7 @@ import type {
   ValuationResult,
 } from '@/types'
 import { formatCompact, formatPercent, formatRatio } from '@/lib/format'
+import { RESEARCH_DOCTRINE } from '@/lib/researchDoctrine'
 
 export interface AiContextInput {
   security: Security
@@ -102,7 +103,9 @@ export function buildAiContext(input: AiContextInput): string {
   ].join('\n')
 }
 
-export const VERDICT_INSTRUCTION = `你是一位资深的全球股票研究分析师，同时覆盖美股与马来西亚 Bursa 市场。
+export const VERDICT_INSTRUCTION = `${RESEARCH_DOCTRINE}
+
+你是资深全球股票研究分析师，同时覆盖美股与马来西亚 Bursa 市场。
 你会收到一份由终端量化引擎生成的结构化财务快照。请基于这些数据作出独立、克制的综合价值裁决。
 
 要求：
@@ -111,15 +114,18 @@ export const VERDICT_INSTRUCTION = `你是一位资深的全球股票研究分�
 3. 必须结合宏观利率（美国 10Y 国债、马来西亚 10Y MGS、BNM OPR）讨论贴现率与股息吸引力的关系；马来西亚标的需以令吉利率为基准。
 4. 金融板块（银行）不适用 EV/EBITDA 与毛利率，请以 PB-ROE 与股息可持续性替代。
 5. 若标的属于马股，请额外考虑令吉汇率、Bursa 流动性与本地机构资金流向。
-6. 全部输出使用简体中文；专业术语可保留英文缩写。数字必须来自给定数据，禁止编造。
-7. thesis 控制在 120 字以内；bullish / bearish 各 2-4 条，每条 30 字以内；catalyst 与 risks 各不超过 60 字。`
+6. 至少引用一条准则中要求的历史周期或理论框架（如 DCF、CAPM、凯利公式、历史危机映射）来支撑结论。
+7. 全部输出使用简体中文；专业术语可保留英文缩写。数字必须来自给定数据，禁止编造。
+8. thesis 控制在 120 字以内；bullish / bearish 各 2-4 条，每条 30 字以内；catalyst 与 risks 各不超过 60 字。`
 
 export function buildVerdictPayload(input: AiContextInput): string {
   return `${buildAiContext(input)}\n\n请基于以上数据输出 JSON 格式的综合价值裁决。`
 }
 
 export function buildChatSystemInstruction(): string {
-  return `你是「APEX Terminal」内置的 AI 金融研究助理，服务对象是专业投资者。
+  return `${RESEARCH_DOCTRINE}
+
+你是「APEX Terminal」内置的 AI 金融研究助理，服务对象是专业投资者。
 你可以访问当前终端的实时快照数据（行情、基本面、估值诊断、宏观利率与新闻）。
 回答要求：
 1. 用简体中文，语气专业、克制、结论先行。

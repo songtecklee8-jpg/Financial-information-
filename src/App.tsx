@@ -7,6 +7,7 @@ import { ApiSettingsModal } from '@/components/ApiSettingsModal'
 import { CandleChart } from '@/components/chart/CandleChart'
 import { MacroPanel } from '@/components/macro/MacroPanel'
 import { NewsHubPage } from '@/components/news/NewsHubPage'
+import { PaperTradingPage } from '@/components/paper/PaperTradingPage'
 import { QuoteHero } from '@/components/market/QuoteHero'
 import { TickerTape } from '@/components/market/TickerTape'
 import { TopBar, type AppView } from '@/components/TopBar'
@@ -25,7 +26,7 @@ const DEFAULT_SYMBOL = 'AAPL'
 
 export default function App() {
   const [symbol, setSymbol] = useState(DEFAULT_SYMBOL)
-  const [view, setView] = useState<AppView>('dashboard')
+  const [view, setView] = useState<AppView>('equity')
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   const api = useApiSettings()
@@ -129,6 +130,8 @@ export default function App() {
 
         {view === 'news' ? (
           <NewsHubPage settings={api.settings} symbol={symbol} onOpenSettings={openSettings} />
+        ) : view === 'paper' ? (
+          <PaperTradingPage settings={api.settings} onOpenSettings={openSettings} />
         ) : (
           <main className="mx-auto w-full max-w-[1800px] flex-1 px-3 pt-3 pb-24 sm:px-4">
             <section className="mb-3">

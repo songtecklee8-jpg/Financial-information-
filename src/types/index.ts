@@ -375,3 +375,142 @@ export interface AiVerdict {
   generatedAt: string
   model: string
 }
+
+// ---------------------------------------------------------------------------
+// 模拟交易（Paper Trading & 多 Profile）
+// ---------------------------------------------------------------------------
+
+export type OrderSide = 'buy' | 'sell'
+export type OrderType = 'market' | 'limit'
+export type OrderStatus = 'filled' | 'open' | 'cancelled' | 'rejected'
+
+/** 持仓（数量与成本均以标的自身计价货币记账） */
+export interface Position {
+  symbol: string
+  name: string
+  market: Market
+  currency: Currency
+  quantity: number
+  /** 持仓均价 */
+  avgCost: number
+  openedAt: string
+  updatedAt: string
+}
+
+/** 成交记录 */
+export interface TradeRecord {
+  id: string
+  profileId: string
+  symbol: string
+  name: string
+  market: Market
+  currency: Currency
+  side: OrderSide
+  type: OrderType
+  quantity: number
+  /** 成交价（标的计价货币） */
+  price: number
+  /** 成交额 = price × quantity（标的计价货币） */
+  notional: number
+  /** 已实现盈亏（账户基准货币，仅减仓 / 平仓时有意义） */
+  realizedPnl: number
+  createdAt: string
+}
+
+/** 挂单（未触发的限价单） */
+export interface PendingOrder {
+  id: string
+  profileId: string
+  symbol: string
+  name: string
+  market: Market
+  currency: Currency
+  side: OrderSide
+  quantity: number
+  limitPrice: number
+  createdAt: string
+}
+
+/** 交易账户档案（Profile） */
+export interface PaperProfile {
+  id: string
+  name: string
+  /** 账户账本货币 */
+  currency: Currency
+  /** 初始本金（账本货币） */
+  initialCapital: number
+  /** 可用现金（账本货币） */
+  cash: number
+  /** USD → MYR 汇率，用于跨币种换算 */
+  fxRate: number
+  positions: Position[]
+  trades: TradeRecord[]
+  pending: PendingOrder[]
+  createdAt: string
+  updatedAt: string
+}
+
+/** 账户绩效统计（全部折算为账本货币） */
+export interface ProfileStats {
+  currency: Currency
+  cash: number
+  positionsValue: number
+  totalValue: number
+  unrealizedPnl: number
+  realizedPnl: number
+  totalPnl: number
+  totalPnlPct: number
+  /** 胜率 (%) */
+  winRate: number
+  wins: number
+  losses: number
+  /** 盈亏比 = 累计盈利 / 累计亏损绝对值 */
+  profitFactor: number
+  /** 最大回撤 (%) */
+  maxDrawdownPct: number
+  tradeCount: number
+  closedTrades: number
+  /** 第一大持仓市值占比 (%) */
+  concentrationPct: number
+}
+
+/** 下单请求 */
+export interface OrderRequest {
+  symbol: string
+  name: string
+  market: Market
+  currency: Currency
+  side: OrderSide
+  type: OrderType
+  quantity: number
+  /** 限价单委托价（标的计价货币） */
+  limitPrice?: number
+  /** 撮合参考的最新价（标的计价货币） */
+  marketPrice: number
+}
+
+/** 下单结果 */
+export interface OrderResult {
+  ok: boolean
+  status: OrderStatus
+  reason?: string
+  trade?: TradeRecord
+  pending?: PendingOrder
+}
+
+/** AI 交易复盘结果 */
+export interface TradeReview {
+  profileId: string
+  headline: string
+  /** 做得好的地方 */
+  strengths: string[]
+  /** 需要改善的地方 */
+  improvements: string[]
+  /** 具体可落地的仓位调整与风控方案 */
+  riskPlan: string
+  /** 交易纪律评分 0-100 */
+  disciplineScore: number
+  generatedAt: string
+  model: string
+  degraded?: boolean
+}
