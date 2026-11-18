@@ -373,6 +373,84 @@ export interface NewsImpact {
   degraded?: boolean
 }
 
+// ---------------------------------------------------------------------------
+// 云端后台（Vercel Serverless + Upstash Redis）
+// ---------------------------------------------------------------------------
+
+/** 云端后台同步的单条行情快照 */
+export interface CloudQuote {
+  symbol: string
+  name: string
+  price: number
+  previousClose: number
+  change: number
+  changePercent: number
+  open: number
+  dayHigh: number
+  dayLow: number
+  volume: number
+  currency: Currency
+  market: Market
+  provider: string
+  updatedAt: string
+  origin: DataOrigin
+}
+
+export interface CloudQuotes {
+  quotes: Record<string, CloudQuote>
+  updatedAt: string
+  liveCount: number
+}
+
+export interface CloudNews {
+  articles: NewsArticle[]
+  updatedAt: string
+  model?: string
+  translatedCount: number
+}
+
+export interface CloudSyncMeta {
+  lastSyncAt: string
+  lastSyncDurationMs: number
+  trigger: 'cron' | 'external' | 'manual'
+  quotes: { total: number; live: number }
+  news: { total: number; translated: number }
+  errors: string[]
+  usingUpstash: boolean
+}
+
+/** GET /api/snapshot 的返回结构 */
+export interface CloudSnapshotResponse {
+  ok: boolean
+  ready: boolean
+  quotes: CloudQuotes | null
+  news: CloudNews | null
+  meta: CloudSyncMeta | null
+}
+
+/** 新闻详情页的阅读语言模式 */
+export type ReaderMode = 'zh' | 'en' | 'both'
+
+/** 单篇新闻的云端深度详情（摘要 + 全文 + 推演） */
+export interface NewsDetail {
+  id: string
+  url: string
+  title: string
+  titleZh?: string
+  sourceName: string
+  publishedAt: string
+  /** AI 核心摘要：3–5 条结构化华文要点 */
+  summaryPoints: string[]
+  /** 抓取清洗后的完整原文 */
+  fullText: string
+  /** 完整全文的华文翻译 */
+  fullTextZh: string
+  impact: NewsImpact
+  model: string
+  extraction: 'readability' | 'fallback' | 'unavailable'
+  cachedAt: string
+}
+
 export interface AiVerdict {
   verdict: Verdict
   score: number

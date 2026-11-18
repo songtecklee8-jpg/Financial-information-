@@ -9,6 +9,7 @@ import type {
   QuoteSnapshot,
   Security,
 } from '@/types'
+import { getCloudQuotes, getCloudSnapshot } from '@/lib/cloud'
 import {
   baselineFundamentals,
   baselineQuote,
@@ -107,6 +108,40 @@ export function useSecuritySnapshot(rawSymbol: string, settings: ApiSettings): S
     setProvider(null)
     setTrail([])
   }, [symbol])
+
+  // 云端后台快照优先：首屏毫秒级拿到后台已准备好的最新报价
+  useEffect(() => {
+    let alive = true
+
+    const apply = async (force: boolean) => {
+      const cloud = force
+        ? (await getCloudSnapshot(true))?.quotes ?? null
+        : await getCloudQuotes()
+      const hit = cloud?.quotes[symbol]
+      if (!alive || !hit || !(hit.price > 0)) return
+      setState((prev) => ({
+        ...prev,
+        quote: mergeQuote(prev.quote, {
+          price: hit.price,
+          previousClose: hit.previousClose,
+          open: hit.open,
+          dayHigh: hit.dayHigh,
+          dayLow: hit.dayLow,
+          volume: hit.volume,
+          currency: hit.currency,
+          updatedAt: hit.updatedAt,
+        }),
+      }))
+      setOrigin('live')
+    }
+
+    void apply(false)
+    const timer = hasProviders ? null : window.setInterval(() => void apply(true), 60_000)
+    return () => {
+      alive = false
+      if (timer) window.clearInterval(timer)
+    }
+  }, [symbol, hasProviders])
 
   // 实时拉取：多引擎故障转移（仅在配置了任意 Key 时）
   useEffect(() => {

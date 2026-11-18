@@ -39,7 +39,7 @@ const DIRECTION_META: Record<ImpactDirection, { label: string; className: string
   neutral: { label: '震荡', className: 'border-gold/40 bg-gold/10 text-gold' },
 }
 
-function AssetRow({ impact }: { impact: AssetImpact }) {
+export function AssetRow({ impact }: { impact: AssetImpact }) {
   const Icon = ASSET_ICON[impact.asset]
   const direction = DIRECTION_META[impact.direction]
   return (

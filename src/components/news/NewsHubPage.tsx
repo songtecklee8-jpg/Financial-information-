@@ -8,13 +8,14 @@ import {
   Languages,
   LoaderCircle,
   Newspaper,
+  Radio,
   RefreshCw,
   Sparkles,
 } from 'lucide-react'
 
 import type { ApiSettings, NewsArticle, NewsCategory, NewsSourceId } from '@/types'
 import { Badge } from '@/components/ui/Badge'
-import { NewsImpactPanel } from '@/components/news/NewsImpactPanel'
+import { NewsReaderPanel } from '@/components/news/NewsReaderPanel'
 import { useNews } from '@/hooks/useNews'
 import { cn } from '@/lib/cn'
 import { formatRelativeTime } from '@/lib/format'
@@ -159,12 +160,16 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
             </div>
             <p className="mt-1 text-[11.5px] leading-relaxed text-dim">
               聚合 Finnhub · Alpha Vantage · GDELT · BERNAMA · The Star · NST · The Edge · Bursa ·
-              CNBC · WSJ · Yahoo Finance 等 12 个源；打开即自动拉取最新资讯，
-              <span className="text-gold">点击任意新闻即触发 AI 跨市场冲击推演</span>。
+              CNBC · WSJ · Yahoo Finance 等 12 个源；后台 24 小时定时同步，
+              <span className="text-gold">点击任意新闻即打开 AI 深度阅读器（核心摘要 + 完整全文 + 五大资产推演）</span>。
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            {news.status === 'live' ? (
+            {news.status === 'cloud' ? (
+              <Badge tone="ice" dot title="数据由云端后台 24 小时定时同步，首屏毫秒级直接读取">
+                CLOUD SYNC
+              </Badge>
+            ) : news.status === 'live' ? (
               <Badge tone="bull" dot>
                 LIVE FEED
               </Badge>
@@ -219,6 +224,20 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
           <span className="text-faint">
             {news.lastUpdated ? `更新于 ${formatRelativeTime(news.lastUpdated)}` : '正在获取…'}
           </span>
+          {news.cloudMeta && (
+            <span className="flex items-center gap-1 text-ice/85" title="云端后台定时同步状态">
+              <Radio className="size-3" /> 云端同步
+              <span className="text-faint">
+                ·{' '}
+                {news.cloudMeta.trigger === 'cron'
+                  ? 'Vercel Cron'
+                  : news.cloudMeta.trigger === 'external'
+                    ? '外部唤醒'
+                    : '手动'}
+                {news.cloudMeta.usingUpstash ? ' · Upstash' : ' · 本地降级'}
+              </span>
+            </span>
+          )}
           <span className="ml-auto flex items-center gap-1 text-faint">
             <Globe className="size-3" /> 追踪标的 <span className="text-dim">{symbol || '—'}</span>
           </span>
@@ -377,7 +396,7 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
                       onClick={() => setSelected(article)}
                       className="inline-flex items-center gap-1 rounded-md border border-gold/40 bg-gold/10 px-2 py-1 font-mono text-[10px] text-gold transition hover:bg-gold/20"
                     >
-                      <Sparkles className="size-3" /> AI 跨市场推演
+                      <Sparkles className="size-3" /> AI 深度阅读
                     </button>
                     {article.titleZh && (
                       <button
@@ -415,7 +434,7 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
       )}
 
       {selected && (
-        <NewsImpactPanel
+        <NewsReaderPanel
           article={selected}
           settings={settings}
           onClose={() => setSelected(null)}

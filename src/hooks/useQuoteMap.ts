@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import type { ApiSettings, Currency, DataOrigin } from '@/types'
+import { getCloudQuotes, getCloudSnapshot, pickCloudPrices } from '@/lib/cloud'
 import { baselineQuote, normalizeSymbol, resolveSecurity } from '@/lib/universe'
 import { configuredProviderCount, fetchQuote } from '@/lib/market/failover'
 
@@ -106,6 +107,41 @@ export function useQuoteMap(symbols: string[], settings: ApiSettings): QuoteMapC
 
     return () => controller.abort()
   }, [key, hasProviders, settings, refreshToken, list])
+
+  // 云端后台快照优先：首屏毫秒级拿到后台已准备好的最新价格
+  useEffect(() => {
+    if (list.length === 0) return
+    let alive = true
+
+    const apply = async (force: boolean) => {
+      const cloud = force
+        ? (await getCloudSnapshot(true))?.quotes ?? null
+        : await getCloudQuotes()
+      if (!alive || !cloud) return
+      const seed = pickCloudPrices(cloud, list)
+      if (Object.keys(seed).length === 0) return
+      const seedCurrencies: Record<string, Currency> = {}
+      for (const sym of list) {
+        const hit = cloud.quotes[sym]
+        if (hit) seedCurrencies[sym] = hit.currency
+      }
+      setPrices((prev) => {
+        const next = { ...prev, ...seed }
+        return sameMap(prev, next) ? prev : next
+      })
+      setCurrencies((prev) => ({ ...prev, ...seedCurrencies }))
+      setOrigin('live')
+    }
+
+    void apply(false)
+
+    // 未配置行情引擎时，靠云端后台快照定期刷新（已配置引擎则由实时链路负责）
+    const timer = hasProviders ? null : window.setInterval(() => void apply(true), 60_000)
+    return () => {
+      alive = false
+      if (timer) window.clearInterval(timer)
+    }
+  }, [key, list, hasProviders])
 
   // 基准模式下微幅心跳，让账户估值保持“活着”的手感
   useEffect(() => {
