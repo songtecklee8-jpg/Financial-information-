@@ -1,0 +1,292 @@
+@import 'tailwindcss';
+
+/* ---------------------------------------------------------------------------
+ * APEX Terminal — design tokens (dark, Bloomberg-inspired)
+ * ------------------------------------------------------------------------- */
+@theme {
+  --color-abyss: #05070a;
+  --color-void: #080c11;
+  --color-panel: #0b1118;
+  --color-panel-2: #0f1720;
+  --color-panel-3: #141e29;
+  --color-line: #1a2531;
+  --color-line-2: #26333f;
+
+  --color-ink: #e9eff6;
+  --color-dim: #8a9bad;
+  --color-faint: #5b6c7e;
+
+  --color-gold: #ffb020;
+  --color-gold-dim: #8a5f10;
+  --color-bull: #26d07c;
+  --color-bear: #ff4d5e;
+  --color-ice: #2ec7f0;
+  --color-iris: #a78bfa;
+
+  --font-sans:
+    'Inter', 'SF Pro Text', system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono:
+    'SF Mono', 'JetBrains Mono', 'Roboto Mono', ui-monospace, Menlo, Consolas,
+    monospace;
+
+  --radius-panel: 14px;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-abyss);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-variant-numeric: tabular-nums;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-2) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line-2);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #33465a;
+  }
+
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  input:focus,
+  textarea:focus,
+  select:focus,
+  button:focus {
+    outline: none;
+  }
+
+  :focus-visible {
+    outline: 1px solid color-mix(in oklab, var(--color-gold) 70%, transparent);
+    outline-offset: 1px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Terminal chrome
+ * ------------------------------------------------------------------------- */
+
+/* Ambient grid + radial glow behind the whole app */
+.term-backdrop {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    radial-gradient(
+      ellipse 80% 55% at 12% -10%,
+      color-mix(in oklab, var(--color-gold) 9%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 70% 50% at 92% 0%,
+      color-mix(in oklab, var(--color-ice) 8%, transparent),
+      transparent 62%
+    ),
+    linear-gradient(to right, var(--color-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--color-line) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    100% 100%,
+    56px 56px,
+    56px 56px;
+  opacity: 0.5;
+  mask-image: radial-gradient(ellipse 110% 90% at 50% 0%, #000 30%, transparent 100%);
+}
+
+.panel {
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.022), rgba(255, 255, 255, 0)),
+    var(--color-panel);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-panel);
+}
+
+.panel-flat {
+  background: var(--color-panel-2);
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+}
+
+/* Top hairline highlight used on bento cards */
+.hairline-top::before {
+  content: '';
+  position: absolute;
+  inset-inline: 14px;
+  top: -1px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--color-line-2) 90%, transparent),
+    transparent
+  );
+}
+
+.glow-gold {
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-gold) 35%, transparent),
+    0 0 26px -6px color-mix(in oklab, var(--color-gold) 45%, transparent);
+}
+
+.text-glow-gold {
+  text-shadow: 0 0 18px color-mix(in oklab, var(--color-gold) 45%, transparent);
+}
+
+/* Live pulse dot */
+@keyframes livePulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
+.live-dot {
+  animation: livePulse 1.8s ease-in-out infinite;
+}
+
+@keyframes tickFlash {
+  0% {
+    background-color: color-mix(in oklab, var(--color-gold) 22%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.tick-flash {
+  animation: tickFlash 0.7s ease-out;
+}
+
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rise-in {
+  animation: riseIn 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes sheen {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(220%);
+  }
+}
+.sheen {
+  position: relative;
+  overflow: hidden;
+}
+.sheen::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  width: 40%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.06),
+    transparent
+  );
+  animation: sheen 2.2s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.caret-blink {
+  animation: blink 1.05s step-end infinite;
+}
+
+/* Scroll container with fading edges */
+.scroll-fade {
+  mask-image: linear-gradient(to bottom, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+/* Marquee ticker */
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.marquee-track {
+  display: inline-flex;
+  white-space: nowrap;
+  animation: marquee 48s linear infinite;
+}
+.marquee:hover .marquee-track {
+  animation-play-state: paused;
+}
