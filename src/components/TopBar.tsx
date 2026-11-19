@@ -1,41 +1,29 @@
 import {
   Activity,
-  Banknote,
-  CalendarRange,
-  ChartCandlestick,
+  Brain,
   KeyRound,
-  Landmark,
   Newspaper,
   Radio,
 } from 'lucide-react'
 
-import { Badge } from '@/components/ui/Badge'
-import { SearchBar } from '@/components/SearchBar'
 import { useClock } from '@/hooks/useClock'
 import { cn } from '@/lib/cn'
 import { formatClock } from '@/lib/format'
 
-/** 顶部导航的主页面（互不挤压的独立分区） */
-export type AppView = 'equity' | 'news' | 'earnings' | 'bonds' | 'paper'
+/** 顶部导航的两个核心页面：新闻情报 / 财报长文深度分析 */
+export type AppView = 'news' | 'analysis'
 
-const NAV_ITEMS: Array<{ key: AppView; label: string; hint: string; icon: typeof ChartCandlestick }> = [
-  { key: 'equity', label: '股票', hint: '实时行情看板 · 多引擎数据源切换 · 全周期 K 线 · 个股量化诊断', icon: ChartCandlestick },
-  { key: 'news', label: '财经新闻', hint: '全球与马股实时新闻中心 · 华文翻译 · 跨市场涨跌概率预测', icon: Newspaper },
-  { key: 'earnings', label: '财报日历', hint: '美股 7 日财报日程（Finnhub/FMP）· 马股 (.KL) 季度财报与 PDF 摘要', icon: CalendarRange },
-  { key: 'bonds', label: '国债看板', hint: '马来西亚政府发债日历（MGS / MGII）· BNM OPR 与 10Y 收益率基准', icon: Landmark },
-  { key: 'paper', label: '模拟交易', hint: '实时盘面仿真交易 · 多策略账户（Profile）管理 · AI 交易复盘', icon: Banknote },
+const NAV_ITEMS: Array<{ key: AppView; label: string; hint: string; icon: typeof Newspaper }> = [
+  { key: 'news', label: '新闻情报与 AI 摘要', hint: '多源财经新闻聚合 · 关键字检索 · 一键 AI 摘要与多空情绪判断', icon: Newspaper },
+  { key: 'analysis', label: '财报长文与文本深度分析', hint: '粘贴财报纪要与研报长文 · 四维结构化投研报告自动生成', icon: Brain },
 ]
 
 interface TopBarProps {
-  symbol: string
-  onSelect: (symbol: string) => void
   onOpenSettings: () => void
-  origin: 'live' | 'baseline'
   view: AppView
   onNavigate: (view: AppView) => void
-  /** 已配置（可参与故障转移）的行情引擎数量 */
-  configuredCount: number
   hasGemini: boolean
+  backupAiCount: number
 }
 
 function MarketClock() {
@@ -58,14 +46,11 @@ function MarketClock() {
 }
 
 export function TopBar({
-  symbol,
-  onSelect,
   onOpenSettings,
-  origin,
   view,
   onNavigate,
-  configuredCount,
   hasGemini,
+  backupAiCount,
 }: TopBarProps) {
   const now = useClock(30_000)
   const klDate = now.toLocaleDateString('en-GB', {
@@ -77,7 +62,7 @@ export function TopBar({
 
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-abyss/85 backdrop-blur-xl">
-      <div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2.5 sm:px-4 lg:py-2">
+      <div className="mx-auto flex max-w-[1800px] flex-wrap items-center justify-between gap-x-4 gap-y-2 px-3 py-2.5 sm:px-4 lg:py-2">
         {/* 品牌 */}
         <div className="flex shrink-0 items-center gap-2.5">
           <div className="relative flex size-8 items-center justify-center rounded-md border border-gold/40 bg-gold/10">
@@ -87,16 +72,16 @@ export function TopBar({
           <div className="leading-none">
             <div className="font-mono text-[15px] font-bold tracking-[0.14em] text-gold text-glow-gold">
               APEX
-              <span className="text-ink"> TERMINAL</span>
+              <span className="text-ink"> RESEARCH</span>
             </div>
             <div className="mt-1 font-mono text-[9px] tracking-[0.16em] text-faint uppercase">
-              Global &amp; Bursa Market Intelligence
+              Lightweight AI Investment Research Assistant
             </div>
           </div>
         </div>
 
-        {/* 主导航：三个独立页面分区 */}
-        <nav className="flex shrink-0 items-center gap-1">
+        {/* 主导航：两大核心页面分区 */}
+        <nav className="flex shrink-0 items-center gap-1.5">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon
             const active = view === item.key
@@ -107,7 +92,7 @@ export function TopBar({
                 onClick={() => onNavigate(item.key)}
                 title={item.hint}
                 className={cn(
-                  'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-[12px] font-medium whitespace-nowrap transition',
+                  'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-mono text-[12px] font-medium whitespace-nowrap transition',
                   active
                     ? 'border-gold/50 bg-gold/12 text-gold'
                     : 'border-transparent text-dim hover:border-line-2 hover:text-ink',
@@ -120,28 +105,20 @@ export function TopBar({
           })}
         </nav>
 
-        {/* 搜索 */}
-        <div className="order-last w-full min-w-0 lg:order-none lg:mx-2 lg:w-auto lg:max-w-2xl lg:flex-1">
-          <SearchBar onSelect={onSelect} activeSymbol={symbol} />
-        </div>
-
-        {/* 右侧状态区 */}
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        {/* 右侧状态区与模型状态指示灯 */}
+        <div className="flex shrink-0 items-center gap-2.5">
           <div className="hidden items-center gap-1.5 xl:flex">
             <span className="font-mono text-[10.5px] text-faint">{klDate}</span>
           </div>
           <MarketClock />
 
-          <div className="hidden items-center gap-1.5 sm:flex">
-            {origin === 'live' ? (
-              <Badge tone="bull" dot title="行情来自多引擎故障转移实时接口">
-                Live Feed
-              </Badge>
-            ) : (
-              <Badge tone="neutral" dot title="未配置行情 Key，当前为终端内置基准数据">
-                Baseline
-              </Badge>
-            )}
+          <div className="flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel-2 px-2.5 py-1 font-mono text-[10.5px]">
+              <span className={cn('size-2 rounded-full', hasGemini || backupAiCount > 0 ? 'bg-bull live-dot' : 'bg-faint')} />
+              <span className="text-dim">
+                {hasGemini ? 'Gemini 智能引擎' : backupAiCount > 0 ? `备用 AI 就绪 (${backupAiCount})` : 'AI 准备就绪'}
+              </span>
+            </span>
           </div>
 
           <button
@@ -149,20 +126,15 @@ export function TopBar({
             onClick={onOpenSettings}
             className={cn(
               'group inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-[11px] transition',
-              configuredCount > 0 || hasGemini
+              hasGemini || backupAiCount > 0
                 ? 'border-line-2 bg-panel-2 text-dim hover:border-gold/50 hover:text-gold'
                 : 'border-gold/45 bg-gold/10 text-gold hover:bg-gold/15',
             )}
-            title="配置各行情引擎与 Gemini API Key"
+            title="配置 AI 模型与备用 API Key"
           >
             {hasGemini ? <Radio className="size-3.5" /> : <KeyRound className="size-3.5" />}
             <span className="hidden sm:inline">API 设置</span>
             <span className="sm:hidden">API</span>
-            {configuredCount === 0 && !hasGemini && (
-              <span className="ml-0.5 hidden rounded bg-gold/20 px-1 py-[1px] text-[9px] sm:inline">
-                待配置
-              </span>
-            )}
           </button>
         </div>
       </div>
