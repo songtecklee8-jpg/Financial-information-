@@ -43,6 +43,7 @@ export type NewsSourceId =
   | 'cnbc'
   | 'yahoo'
   | 'finnhub'
+  | 'newsdata'
   | 'alphavantage'
   | 'gdelt'
   | 'bernama'
@@ -73,6 +74,18 @@ export interface ServerArticle {
   categories: NewsCategory[]
   origin: 'live' | 'baseline'
   translation: 'none' | 'pending' | 'done' | 'failed'
+}
+
+/** 标准化新闻数据结构（存入 Redis Sorted Set `news:global_feed`） */
+export interface NewsItem {
+  id: string
+  title: string
+  translatedTitle?: string
+  summary?: string
+  url: string
+  source: string
+  publishedAt: string
+  sentiment?: 'bullish' | 'bearish' | 'neutral'
 }
 
 export interface NewsPayload {

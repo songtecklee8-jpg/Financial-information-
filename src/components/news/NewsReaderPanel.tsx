@@ -19,6 +19,7 @@ import { cn } from '@/lib/cn'
 import { formatRelativeTime } from '@/lib/format'
 import { fetchNewsDetail } from '@/lib/cloud'
 import { aiRoute, modelDisplayName, runNewsDetailClient } from '@/lib/gemini'
+import { requestText } from '@/lib/market/net'
 import { localNewsImpact } from '@/lib/newsImpact'
 
 interface NewsReaderPanelProps {
@@ -56,6 +57,50 @@ function paragraphs(text: string): string[] {
     .filter((line) => line.length > 0)
 }
 
+/** 浏览器端正文抓取兜底（用于 GitHub Pages 纯静态部署或后端无法直连目标站点时） */
+async function extractArticleBrowser(
+  url: string,
+  signal?: AbortSignal,
+): Promise<{ fullText: string; extraction: NewsDetail['extraction'] }> {
+  if (!url || !url.startsWith('http') || typeof DOMParser === 'undefined') {
+    return { fullText: '', extraction: 'unavailable' }
+  }
+  try {
+    const html = await requestText(url, { signal, timeoutMs: 8500 })
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    for (const el of Array.from(doc.querySelectorAll('script,style,noscript,nav,header,footer,aside,form'))) {
+      el.remove()
+    }
+    const container =
+      doc.querySelector('article, [role="main"], main, .article-body, .story-body, .post-content') ?? doc.body
+    const rawParas = Array.from(container?.querySelectorAll('p') ?? [])
+      .map((p) => (p.textContent ?? '').replace(/\s+/g, ' ').trim())
+      .filter((t) => t.length >= 35 && !/^(advertisement|subscribe|sign in|cookie)/i.test(t))
+
+    const paras =
+      rawParas.length >= 2
+        ? rawParas
+        : Array.from(doc.querySelectorAll('p'))
+            .map((p) => (p.textContent ?? '').replace(/\s+/g, ' ').trim())
+            .filter((t) => t.length >= 45)
+
+    const deduped = Array.from(new Set(paras)).slice(0, 45)
+    if (deduped.length >= 2) {
+      return { fullText: deduped.join('\n\n'), extraction: 'fallback' }
+    }
+    const ogDesc =
+      doc.querySelector('meta[property="og:description"]')?.getAttribute('content')?.trim() ||
+      doc.querySelector('meta[name="description"]')?.getAttribute('content')?.trim() ||
+      ''
+    if (ogDesc.length >= 60) {
+      return { fullText: ogDesc, extraction: 'fallback' }
+    }
+    return { fullText: '', extraction: 'unavailable' }
+  } catch {
+    return { fullText: '', extraction: 'unavailable' }
+  }
+}
+
 export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelProps) {
   const [detail, setDetail] = useState<NewsDetail | null>(null)
   const [impact, setImpact] = useState<NewsImpact | null>(null)
@@ -89,20 +134,54 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
         refresh,
         aiRouting: tier === 'pro' && settings.aiRouting === 'auto' ? 'pro' : settings.aiRouting,
         geminiModel: settings.geminiModel,
+        geminiKey: settings.geminiKey,
       })
       if (controller.signal.aborted) return
 
       const remoteHasAi = Boolean(remote && remote.model !== 'local' && !remote.impact?.degraded)
-      if (remote && remoteHasAi) {
+      if (remote && remoteHasAi && remote.fullText.trim().length > 0) {
         setDetail(remote)
         setImpact(remote.impact)
         setLoading(false)
         return
       }
 
-      // 2) 云端未配置 Gemini Key 或不可用：保留抓到的原文 fullText，回落浏览器端 AI（使用用户在 [API 设置] 填入的 Key）
-      const extractedText = remote?.fullText ?? ''
-      const extractionMode = remote?.extraction ?? 'unavailable'
+      // 2) 若云端未提取到正文（或静态托管无 /api），尝试浏览器 CORS 网关抓取原文完整正文
+      let extractedText = remote?.fullText ?? ''
+      let extractionMode: NewsDetail['extraction'] = remote?.extraction ?? 'unavailable'
+      if (!extractedText.trim() && article.url && article.url !== '#' && article.url.startsWith('http')) {
+        const browserExtracted = await extractArticleBrowser(article.url, controller.signal)
+        if (controller.signal.aborted) return
+        if (browserExtracted.fullText.trim().length > 0) {
+          extractedText = browserExtracted.fullText
+          extractionMode = browserExtracted.extraction
+        }
+      }
+
+      if (remote && remoteHasAi) {
+        setDetail({ ...remote, fullText: extractedText || remote.fullText, extraction: extractionMode })
+        setImpact(remote.impact)
+        setLoading(false)
+        return
+      }
+
+      const fallbackDetail = (): NewsDetail => ({
+        id: article.id,
+        url: article.url,
+        title: article.title,
+        titleZh: article.titleZh,
+        sourceName: article.sourceName,
+        publishedAt: article.publishedAt,
+        summaryPoints: fallbackPoints(article),
+        fullText: extractedText,
+        fullTextZh: article.lang === 'zh' ? extractedText : '',
+        impact: localNewsImpact(article),
+        model: 'local',
+        extraction: extractionMode,
+        cachedAt: new Date().toISOString(),
+      })
+
+      // 3) 浏览器端 AI 生成摘要 + 完整华文翻译 + 五大资产推演
       try {
         if (hasGemini) {
           const clientDetail = await runNewsDetailClient(
@@ -117,13 +196,15 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
           setDetail(clientDetail)
           setImpact(clientDetail.impact)
         } else {
-          if (remote) setDetail(remote)
-          setImpact(localNewsImpact(article))
+          const localDetail = remote ? { ...remote, fullText: extractedText || remote.fullText, extraction: extractionMode } : fallbackDetail()
+          setDetail(localDetail)
+          setImpact(localDetail.impact)
         }
       } catch {
         if (controller.signal.aborted) return
-        if (remote) setDetail(remote)
-        setImpact(localNewsImpact(article))
+        const localDetail = remote ? { ...remote, fullText: extractedText || remote.fullText, extraction: extractionMode } : fallbackDetail()
+        setDetail(localDetail)
+        setImpact(localDetail.impact)
       } finally {
         if (!controller.signal.aborted) setLoading(false)
       }
@@ -237,9 +318,9 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
                 href={openUrl}
                 target="_blank"
                 rel="noreferrer noopener"
-                className="inline-flex items-center gap-0.5 text-gold/90 hover:text-gold"
+                className="ml-auto inline-flex items-center gap-1 rounded border border-gold/40 bg-gold/10 px-2 py-0.5 text-gold transition hover:bg-gold/20"
               >
-                原文出处 <ExternalLink className="size-2.5" />
+                前往原文链接 <ExternalLink className="size-2.5" />
               </a>
             )}
           </div>
@@ -426,9 +507,9 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
                   href={openUrl}
                   target="_blank"
                   rel="noreferrer noopener"
-                  className="mt-2 inline-flex items-center gap-1 font-mono text-[10.5px] text-faint transition hover:text-gold"
+                  className="mt-2.5 inline-flex items-center gap-1 rounded border border-line-2 px-2.5 py-1 font-mono text-[10.5px] text-dim transition hover:border-gold/50 hover:text-gold"
                 >
-                  原文出处 <ExternalLink className="size-2.5" />
+                  跳转外部原始报道全文 <ExternalLink className="size-2.5" />
                 </a>
               )}
             </section>

@@ -159,9 +159,9 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
               </h1>
             </div>
             <p className="mt-1 text-[11.5px] leading-relaxed text-dim">
-              聚合 Finnhub · Alpha Vantage · GDELT · BERNAMA · The Star · NST · The Edge · Bursa ·
-              CNBC · WSJ · Yahoo Finance 等 12 个源；后台 24 小时定时同步，
-              <span className="text-gold">点击任意新闻即打开 AI 深度阅读器（核心摘要 + 完整全文 + 五大资产推演）</span>。
+              聚合 Finnhub · NewsData.io · Alpha Vantage · GDELT · BERNAMA · The Star · NST · The Edge ·
+              Bursa · CNBC · WSJ · Yahoo Finance 等多源财经资讯；后台 24 小时定时同步，
+              <span className="text-gold">点击任意新闻即打开完整全文与 AI 深度阅读器，并支持一键直达原文外链</span>。
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -335,7 +335,8 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
         <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
           {filtered.map((article) => {
             const sentiment = SENTIMENT_META[article.sentiment]
-            const meta = sourceMeta(article.sourceId)
+            const meta =
+              NEWS_SOURCES.find((item) => item.id === article.sourceId) ?? sourceMeta('gdelt')
             const showZh = Boolean(article.titleZh) && !showOriginal[article.id]
             const isCrypto = article.categories.includes('crypto')
             return (
@@ -424,9 +425,9 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
                       href={article.url}
                       target="_blank"
                       rel="noreferrer noopener"
-                      className="inline-flex items-center gap-0.5 font-mono text-[10px] text-faint transition hover:text-gold"
+                      className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 font-mono text-[10px] text-dim transition hover:border-gold/50 hover:text-gold"
                     >
-                      来源 <ExternalLink className="size-2.5" />
+                      原文链接 <ExternalLink className="size-2.5" />
                     </a>
                   )}
                 </div>

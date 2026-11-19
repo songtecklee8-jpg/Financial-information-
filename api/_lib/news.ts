@@ -269,6 +269,38 @@ async function loadFinnhub(key: string): Promise<ServerArticle[]> {
   })
 }
 
+async function loadNewsData(key: string): Promise<ServerArticle[]> {
+  const meta = serverSourceMeta('newsdata')
+  const url =
+    `https://newsdata.io/api/1/latest?apikey=${encodeURIComponent(key)}` +
+    '&category=business&country=us,my&language=en'
+  const data = asRecord(await fetchJson(url))
+  return asArray(data.results).flatMap((entry) => {
+    const row = asRecord(entry)
+    const title = asString(row.title)
+    if (!title) return []
+    const link = asString(row.link)
+    const countries = asArray(row.country).map((c) => asString(c).toLowerCase())
+    const isMy =
+      countries.includes('malaysia') ||
+      /\b(malaysia|bursa|ringgit|bnm|klci|kuala lumpur)\b/i.test(title)
+    const article = buildArticle(
+      {
+        title,
+        summary: stripHtml(asString(row.description) || asString(row.content) || title).slice(0, 400),
+        url: link,
+        publishedAt: safeDate(row.pubDate ?? row.pubDateTZ),
+      },
+      meta,
+    )
+    article.region = isMy ? 'malaysia' : 'global'
+    if (asString(row.source_name)) {
+      article.sourceName = `NewsData · ${asString(row.source_name)}`
+    }
+    return [article]
+  })
+}
+
 async function loadAlphaVantage(key: string): Promise<ServerArticle[]> {
   const meta = serverSourceMeta('alphavantage')
   const data = asRecord(
@@ -319,8 +351,23 @@ async function loadGdelt(): Promise<ServerArticle[]> {
 
 async function loadBursa(): Promise<ServerArticle[]> {
   const meta = serverSourceMeta('bursa')
+  // 1) Bursa Malaysia RSS 订阅源
+  const rssUrls = [
+    'https://www.bursamalaysia.com/rss/announcements',
+    'https://www.bursamalaysia.com/market_information/announcements/company_announcement/rss',
+  ]
+  for (const rssUrl of rssUrls) {
+    try {
+      const items = parseRssToArticles(await fetchText(rssUrl, 6000), meta)
+      if (items.length > 0) return items
+    } catch {
+      // 继续尝试 API
+    }
+  }
+
+  // 2) Bursa Announcements API
   try {
-    const data = await fetchJson('https://www.bursamalaysia.com/api/v1/announcements?per_page=30')
+    const data = await fetchJson('https://www.bursamalaysia.com/api/v1/announcements?per_page=30', 6000)
     const list = Array.isArray(data)
       ? data
       : Object.values(asRecord(asRecord(data).data)).find(Array.isArray) ?? []
@@ -340,7 +387,32 @@ async function loadBursa(): Promise<ServerArticle[]> {
         ),
       ]
     })
-    return articles
+    if (articles.length > 0) return articles
+  } catch {
+    // 继续尝试 GDELT 马来西亚企业公告源
+  }
+
+  // 3) GDELT 兜底抓取大马上市公司与 Bursa Malaysia 最新公告资讯
+  try {
+    const gdeltUrl =
+      'https://api.gdeltproject.org/api/v2/doc/doc?query=(%22Bursa%20Malaysia%22%20OR%20Maybank%20OR%20Tenaga%20OR%20CIMB%20OR%20%22Public%20Bank%22%20OR%20Petronas)%20sourcelang:english&mode=artlist&format=json&maxrecords=25&sort=datedesc'
+    const data = asRecord(await fetchJson(gdeltUrl, 7000))
+    return asArray(data.articles).flatMap((entry) => {
+      const row = asRecord(entry)
+      const title = asString(row.title)
+      if (!title) return []
+      return [
+        buildArticle(
+          {
+            title,
+            summary: title,
+            url: asString(row.url),
+            publishedAt: parseCompactDate(asString(row.seendate)),
+          },
+          meta,
+        ),
+      ]
+    })
   } catch {
     return []
   }
@@ -354,7 +426,7 @@ async function loadRssSource(meta: ServerSourceMeta): Promise<ServerArticle[]> {
   const urls = [meta.feedUrl, ...(SECONDARY_FEEDS[meta.id] ?? [])].filter(
     (value): value is string => Boolean(value),
   )
-  if (meta.id === 'cnbc') {
+  if (meta.id === 'cnbc' || meta.id === 'yahoo') {
     const settled = await Promise.allSettled(urls.map((url) => fetchText(url)))
     return settled.flatMap((result) =>
       result.status === 'fulfilled' ? parseRssToArticles(result.value, meta) : [],
@@ -377,6 +449,8 @@ async function loadSource(meta: ServerSourceMeta, keys: ServerKeys): Promise<Ser
   switch (meta.id) {
     case 'finnhub':
       return key ? loadFinnhub(key).catch(() => []) : []
+    case 'newsdata':
+      return key ? loadNewsData(key).catch(() => []) : []
     case 'alphavantage':
       return key ? loadAlphaVantage(key).catch(() => []) : []
     case 'gdelt':
@@ -388,24 +462,73 @@ async function loadSource(meta: ServerSourceMeta, keys: ServerKeys): Promise<Ser
   }
 }
 
-/** 合并去重：按 url / 标题去重、丢弃过短标题、按时间降序、截断 */
-function finalize(articles: ServerArticle[], limit: number): ServerArticle[] {
-  const seen = new Set<string>()
-  const out: ServerArticle[] = []
-  for (const article of articles) {
-    if (article.title.trim().length < 8) continue
-    const key = (article.url && article.url !== '#' ? article.url : article.title).toLowerCase().trim()
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    out.push(article)
+function normalizeUrl(raw: string): string {
+  if (!raw || raw === '#') return ''
+  try {
+    const u = new URL(raw)
+    for (const p of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'guccounter']) {
+      u.searchParams.delete(p)
+    }
+    return `${u.hostname.replace(/^www\./, '')}${u.pathname.replace(/\/+$/, '')}${u.search}`.toLowerCase()
+  } catch {
+    return raw.toLowerCase().trim()
   }
-  out.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
-  return out.slice(0, limit)
+}
+
+function titleTokens(title: string): string[] {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w.length >= 2)
+}
+
+function isSimilarTitle(aTokens: string[], bTokens: string[]): boolean {
+  if (aTokens.length < 4 || bTokens.length < 4) return false
+  const setA = new Set(aTokens)
+  let hit = 0
+  for (const token of bTokens) {
+    if (setA.has(token)) hit += 1
+  }
+  const union = new Set([...aTokens, ...bTokens]).size
+  return union > 0 && hit / union >= 0.8
+}
+
+/** 合并去重：URL 归一化 + 标题相似度（>=80% 词集合重合）去重、丢弃过短标题、按时间降序、截断 */
+export function dedupeArticles(articles: ServerArticle[], limit = 200): ServerArticle[] {
+  const seenUrls = new Set<string>()
+  const seenTitleKeys = new Set<string>()
+  const acceptedTokens: string[][] = []
+  const sorted = articles
+    .slice()
+    .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+
+  const out: ServerArticle[] = []
+  for (const article of sorted) {
+    const cleanTitle = article.title.trim()
+    if (cleanTitle.length < 8) continue
+
+    const urlKey = normalizeUrl(article.url)
+    if (urlKey && seenUrls.has(urlKey)) continue
+
+    const tokens = titleTokens(cleanTitle)
+    const exactTitleKey = tokens.join(' ')
+    if (exactTitleKey && seenTitleKeys.has(exactTitleKey)) continue
+    if (acceptedTokens.some((prev) => isSimilarTitle(prev, tokens))) continue
+
+    if (urlKey) seenUrls.add(urlKey)
+    if (exactTitleKey) seenTitleKeys.add(exactTitleKey)
+    if (tokens.length >= 4) acceptedTokens.push(tokens)
+    out.push(article)
+    if (out.length >= limit) break
+  }
+  return out
 }
 
 /** 并发抓取全部新闻源，返回合并去重后的文章列表 */
-export async function fetchAllNews(keys: ServerKeys, limit = 120): Promise<ServerArticle[]> {
+export async function fetchAllNews(keys: ServerKeys, limit = 200): Promise<ServerArticle[]> {
   const settled = await Promise.allSettled(SERVER_SOURCES.map((meta) => loadSource(meta, keys)))
   const articles = settled.flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
-  return finalize(articles, limit)
+  return dedupeArticles(articles, limit)
 }

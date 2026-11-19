@@ -135,6 +135,7 @@ export interface NewsDetailRequest {
   refresh?: boolean
   aiRouting?: string
   geminiModel?: string
+  geminiKey?: string
 }
 
 /** 请求云端新闻详情接口；失败返回 null（由调用方回落本地推演） */
@@ -164,6 +165,7 @@ export async function fetchNewsDetail(req: NewsDetailRequest): Promise<NewsDetai
       refresh: req.refresh ? '1' : '',
       aiRouting: req.aiRouting ?? '',
       geminiModel: req.geminiModel ?? '',
+      geminiKey: req.geminiKey ?? '',
     }),
   })
 

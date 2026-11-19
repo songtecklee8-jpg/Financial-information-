@@ -294,6 +294,7 @@ export type NewsSourceId =
   | 'cnbc'
   | 'yahoo'
   | 'finnhub'
+  | 'newsdata'
   | 'alphavantage'
   | 'gdelt'
   | 'bernama'

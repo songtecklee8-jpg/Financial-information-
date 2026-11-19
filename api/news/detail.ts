@@ -23,6 +23,7 @@ const VALID_SOURCES = new Set<NewsSourceId>([
   'cnbc',
   'yahoo',
   'finnhub',
+  'newsdata',
   'alphavantage',
   'gdelt',
   'bernama',
@@ -124,6 +125,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   const keys = loadKeys()
 
+  const geminiKey = pick('geminiKey') || keys.gemini
+
   // 1) 抓取正文并清洗（失败则回落到 RSS 导语）
   const extracted = isSafeUrl(url) ? await extractArticle(url) : { text: '', mode: 'unavailable' as const }
   const fullText = extracted.text || article.summary
@@ -131,7 +134,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   // 2) AI 摘要要点 + 五大资产推演 + 全文翻译
   let detail: NewsDetail
   try {
-    detail = await buildNewsDetail({ article, fullText, apiKey: keys.gemini, model: requestedModel })
+    detail = await buildNewsDetail({ article, fullText, apiKey: geminiKey, model: requestedModel })
   } catch (error) {
     res.status(200).json({
       ok: false,

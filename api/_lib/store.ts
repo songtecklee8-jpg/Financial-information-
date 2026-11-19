@@ -132,9 +132,12 @@ export async function deleteKey(key: string): Promise<void> {
 // 存储键名
 // ---------------------------------------------------------------------------
 
+import type { NewsItem } from './types.js'
+
 export const STORE_KEYS = {
   quotes: 'apex:quotes',
   news: 'apex:news',
+  globalNewsFeed: 'news:global_feed',
   syncMeta: 'apex:sync-meta',
   newsDetail: (id: string) => `apex:news:detail:${id}`,
   earnings: 'apex:earnings',
@@ -150,4 +153,70 @@ export const TTL = {
   bonds: 60 * 120,
   detail: 60 * 60 * 24 * 7,
 } as const
+
+const MAX_FEED_ITEMS = 200
+
+/**
+ * 将标准化新闻列表写入 Redis Sorted Set（`news:global_feed`），按发布时间排序并仅保留最近 200 条；
+ * 未配置 Upstash Redis 时自动退化为本地内存 + /tmp 持久化。
+ */
+export async function saveGlobalNewsFeed(items: NewsItem[]): Promise<number> {
+  const deduped = items
+    .slice()
+    .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+    .slice(0, MAX_FEED_ITEMS)
+
+  const redis = getClient()
+  if (redis) {
+    try {
+      await redis.del(STORE_KEYS.globalNewsFeed)
+      if (deduped.length > 0) {
+        const members = deduped.map((item) => {
+          const ts = new Date(item.publishedAt).getTime()
+          return {
+            score: Number.isFinite(ts) ? ts : Date.now(),
+            member: JSON.stringify(item),
+          }
+        })
+        const [first, ...rest] = members
+        if (first) {
+          await redis.zadd(STORE_KEYS.globalNewsFeed, first, ...rest)
+          await redis.zremrangebyrank(STORE_KEYS.globalNewsFeed, 0, -(MAX_FEED_ITEMS + 1))
+        }
+      }
+      return deduped.length
+    } catch {
+      // Redis 写入失败时回退本地缓存
+    }
+  }
+
+  await writeJson(STORE_KEYS.globalNewsFeed, deduped, TTL.news)
+  return deduped.length
+}
+
+/** 从 Redis Sorted Set（或本地降级缓存）读取最新标准化新闻列表 */
+export async function readGlobalNewsFeed(): Promise<NewsItem[]> {
+  const redis = getClient()
+  if (redis) {
+    try {
+      const raw = await redis.zrange<string[]>(STORE_KEYS.globalNewsFeed, 0, MAX_FEED_ITEMS - 1, {
+        rev: true,
+      })
+      return raw
+        .map((entry) => {
+          try {
+            return (typeof entry === 'string' ? JSON.parse(entry) : entry) as NewsItem
+          } catch {
+            return null
+          }
+        })
+        .filter((item): item is NewsItem => item !== null)
+    } catch {
+      return []
+    }
+  }
+  const local = await readJson<NewsItem[]>(STORE_KEYS.globalNewsFeed)
+  return Array.isArray(local) ? local : []
+}
+
 

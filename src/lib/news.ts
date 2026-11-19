@@ -84,6 +84,7 @@ export const NEWS_SOURCES: NewsSourceMeta[] = [
     lang: 'en',
     kind: 'rss',
     needsKey: null,
+    feedUrl: 'https://finance.yahoo.com/news/rssindex',
     categories: ['equities'],
     accent: 'iris',
   },
@@ -96,6 +97,16 @@ export const NEWS_SOURCES: NewsSourceMeta[] = [
     needsKey: 'finnhub',
     categories: ['equities', 'corporate'],
     accent: 'bull',
+  },
+  {
+    id: 'newsdata',
+    name: 'NewsData.io Finance',
+    region: 'global',
+    lang: 'en',
+    kind: 'api',
+    needsKey: null,
+    categories: ['equities', 'macro'],
+    accent: 'ice',
   },
   {
     id: 'alphavantage',
@@ -429,6 +440,7 @@ function parseRss(xml: string): ParsedFeedItem[] {
     const linkNode = node.querySelector('link')
     const link = (linkNode?.getAttribute('href') ?? linkNode?.textContent ?? '').trim()
     const rawSummary =
+      node.querySelector('encoded')?.textContent ??
       node.querySelector('description')?.textContent ??
       node.querySelector('summary')?.textContent ??
       node.querySelector('content')?.textContent ??
@@ -442,7 +454,7 @@ function parseRss(xml: string): ParsedFeedItem[] {
     return {
       title,
       link,
-      summary: stripHtml(rawSummary).slice(0, 240),
+      summary: stripHtml(rawSummary).slice(0, 480),
       publishedAt: toIso(dateText, 'text'),
     }
   })
@@ -643,10 +655,23 @@ function parseBursaHtml(html: string, meta: NewsSourceMeta): NewsArticle[] {
   return articles
 }
 
-/** Bursa Malaysia 公司公告（尽力而为，失败即返回空） */
+/** Bursa Malaysia 公司公告（RSS + API + HTML + GDELT 兜底） */
 async function loadBursa(signal?: AbortSignal): Promise<NewsArticle[]> {
   const meta = sourceMeta('bursa')
   const articles: NewsArticle[] = []
+
+  const rssUrls = [
+    'https://www.bursamalaysia.com/rss/announcements',
+    'https://www.bursamalaysia.com/market_information/announcements/company_announcement/rss',
+  ]
+  for (const rssUrl of rssUrls) {
+    try {
+      const items = parseRssToArticles(await fetchText(rssUrl, signal), meta)
+      if (items.length > 0) return items
+    } catch {
+      // 静默忽略，尝试下一个源
+    }
+  }
 
   try {
     const apiUrl = 'https://www.bursamalaysia.com/api/v1/announcements?per_page=30'
@@ -688,6 +713,33 @@ async function loadBursa(signal?: AbortSignal): Promise<NewsArticle[]> {
     }
   }
 
+  if (articles.length === 0) {
+    try {
+      const gdeltUrl =
+        'https://api.gdeltproject.org/api/v2/doc/doc?query=(%22Bursa%20Malaysia%22%20OR%20Maybank%20OR%20Tenaga%20OR%20CIMB%20OR%20%22Public%20Bank%22%20OR%20Petronas)%20sourcelang:english&mode=artlist&format=json&maxrecords=25&sort=datedesc'
+      const data = safeJson(await fetchText(gdeltUrl, signal))
+      for (const entry of asArray(asRecord(data).articles)) {
+        const row = asRecord(entry)
+        const title = asString(row.title)
+        if (!title) continue
+        articles.push(
+          buildArticle(
+            {
+              title,
+              summary: title,
+              url: asString(row.url),
+              publishedAt: parseCompactDate(asString(row.seendate)),
+              tickers: [],
+            },
+            meta,
+          ),
+        )
+      }
+    } catch {
+      // 静默忽略
+    }
+  }
+
   return articles
 }
 
@@ -700,6 +752,9 @@ const SECONDARY_FEEDS: Partial<Record<NewsSourceId, string[]>> = {
   bernama: ['https://www.bernama.com/en/rss/business.xml'],
   theedgemalaysia: ['https://www.theedgemarkets.com/rss.xml'],
   cnbc: ['https://www.cnbc.com/id/10000664/device/rss/rss.html'],
+  yahoo: [
+    'https://feeds.finance.yahoo.com/rss/2.0/headline?s=AAPL,MSFT,NVDA,TSLA,AMZN,1155.KL,1295.KL,1023.KL,5347.KL&region=US&lang=en-US',
+  ],
 }
 
 /** 加载单个 RSS 源 */
@@ -708,15 +763,19 @@ async function loadRssSource(
   symbol: string | undefined,
   signal?: AbortSignal,
 ): Promise<NewsArticle[]> {
-  // Yahoo Finance 需要 symbol，否则跳过
   if (meta.id === 'yahoo') {
-    if (!symbol) return []
-    const url = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(symbol)}&region=US&lang=en-US`
-    try {
-      return parseRssToArticles(await fetchText(url, signal), meta, symbol)
-    } catch {
-      return []
-    }
+    const tickerUrl = symbol
+      ? `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(symbol)}&region=US&lang=en-US`
+      : null
+    const urls = [tickerUrl, meta.feedUrl, ...(SECONDARY_FEEDS.yahoo ?? [])].filter(
+      (value): value is string => Boolean(value),
+    )
+    const settled = await Promise.allSettled(urls.map((url) => fetchText(url, signal)))
+    return settled.flatMap((result, index) =>
+      result.status === 'fulfilled'
+        ? parseRssToArticles(result.value, meta, index === 0 && symbol ? symbol : undefined)
+        : [],
+    )
   }
 
   const urls = [meta.feedUrl, ...(SECONDARY_FEEDS[meta.id] ?? [])].filter(
@@ -774,19 +833,68 @@ function loadSource(
     : loadApiSource(meta, settings, symbol, signal)
 }
 
-/** 合并去重：按 url（或标题）去重、丢弃过短标题、按时间降序、截断到 150 条 */
-function finalizeArticles(articles: NewsArticle[]): NewsArticle[] {
-  const seen = new Set<string>()
-  const result: NewsArticle[] = []
-  for (const article of articles) {
-    if (article.title.trim().length < 8) continue
-    const key = (article.url && article.url !== '#' ? article.url : article.title).toLowerCase().trim()
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    result.push(article)
+function normalizeUrl(raw: string): string {
+  if (!raw || raw === '#') return ''
+  try {
+    const u = new URL(raw)
+    for (const p of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'guccounter']) {
+      u.searchParams.delete(p)
+    }
+    return `${u.hostname.replace(/^www\./, '')}${u.pathname.replace(/\/+$/, '')}${u.search}`.toLowerCase()
+  } catch {
+    return raw.toLowerCase().trim()
   }
-  result.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
-  return result.slice(0, 150)
+}
+
+function titleTokens(title: string): string[] {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w.length >= 2)
+}
+
+function isSimilarTitle(aTokens: string[], bTokens: string[]): boolean {
+  if (aTokens.length < 4 || bTokens.length < 4) return false
+  const setA = new Set(aTokens)
+  let hit = 0
+  for (const token of bTokens) {
+    if (setA.has(token)) hit += 1
+  }
+  const union = new Set([...aTokens, ...bTokens]).size
+  return union > 0 && hit / union >= 0.8
+}
+
+/** 合并去重：按归一化 URL 与标题相似度去重、丢弃过短标题、按时间降序、截断到 200 条 */
+function finalizeArticles(articles: NewsArticle[]): NewsArticle[] {
+  const seenUrls = new Set<string>()
+  const seenTitleKeys = new Set<string>()
+  const acceptedTokens: string[][] = []
+  const sorted = articles
+    .slice()
+    .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+
+  const result: NewsArticle[] = []
+  for (const article of sorted) {
+    const cleanTitle = article.title.trim()
+    if (cleanTitle.length < 8) continue
+
+    const urlKey = normalizeUrl(article.url)
+    if (urlKey && seenUrls.has(urlKey)) continue
+
+    const tokens = titleTokens(cleanTitle)
+    const exactTitleKey = tokens.join(' ')
+    if (exactTitleKey && seenTitleKeys.has(exactTitleKey)) continue
+    if (acceptedTokens.some((prev) => isSimilarTitle(prev, tokens))) continue
+
+    if (urlKey) seenUrls.add(urlKey)
+    if (exactTitleKey) seenTitleKeys.add(exactTitleKey)
+    if (tokens.length >= 4) acceptedTokens.push(tokens)
+    result.push(article)
+    if (result.length >= 200) break
+  }
+  return result
 }
 
 /**
@@ -1082,6 +1190,22 @@ const BASELINE_SEEDS: BaselineSeed[] = [
   },
 ]
 
+const SOURCE_PORTAL_URL: Record<NewsSourceId, string> = {
+  wsj: 'https://www.wsj.com/market-data',
+  wallstreetcn: 'https://wallstreetcn.com/news/global',
+  cnbc: 'https://www.cnbc.com/markets/',
+  yahoo: 'https://finance.yahoo.com/',
+  finnhub: 'https://finnhub.io/',
+  newsdata: 'https://newsdata.io/',
+  alphavantage: 'https://www.alphavantage.co/',
+  gdelt: 'https://www.gdeltproject.org/',
+  bernama: 'https://www.bernama.com/en/business/',
+  thestar: 'https://www.thestar.com.my/business',
+  nst: 'https://www.nst.com.my/business',
+  theedgemalaysia: 'https://theedgemalaysia.com/',
+  bursa: 'https://www.bursamalaysia.com/market_information/announcements/company_announcement',
+}
+
 /** 基准新闻（高仿真兜底，23 条），按时间降序 */
 export function baselineNews(now = Date.now()): NewsArticle[] {
   return BASELINE_SEEDS.map((seed, index) => {
@@ -1092,7 +1216,7 @@ export function baselineNews(now = Date.now()): NewsArticle[] {
       summary: seed.summary,
       sourceId: seed.sourceId,
       sourceName: meta.name,
-      url: '#',
+      url: SOURCE_PORTAL_URL[seed.sourceId] ?? '#',
       publishedAt: new Date(now - seed.minutesAgo * 60_000).toISOString(),
       region: meta.region,
       lang: meta.lang,

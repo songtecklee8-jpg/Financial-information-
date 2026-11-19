@@ -55,6 +55,7 @@ export const SERVER_SOURCES: ServerSourceMeta[] = [
     region: 'global',
     lang: 'en',
     kind: 'rss',
+    feedUrl: 'https://finance.yahoo.com/news/rssindex',
     categories: ['equities'],
     accent: 'iris',
   },
@@ -66,6 +67,15 @@ export const SERVER_SOURCES: ServerSourceMeta[] = [
     kind: 'api',
     categories: ['equities', 'corporate'],
     accent: 'bull',
+  },
+  {
+    id: 'newsdata',
+    name: 'NewsData.io Finance',
+    region: 'global',
+    lang: 'en',
+    kind: 'api',
+    categories: ['macro', 'equities'],
+    accent: 'ice',
   },
   {
     id: 'alphavantage',
@@ -146,7 +156,13 @@ export function serverSourceMeta(id: NewsSourceId): ServerSourceMeta {
 
 /** 部分 RSS 源的次级 / 备用地址 */
 export const SECONDARY_FEEDS: Partial<Record<NewsSourceId, string[]>> = {
-  bernama: ['https://www.bernama.com/en/rss/business.xml'],
+  bernama: [
+    'https://www.bernama.com/en/rss/business.xml',
+    'https://www.bernama.com/en/rssfeed.php?cat=business',
+  ],
+  yahoo: [
+    'https://feeds.finance.yahoo.com/rss/2.0/headline?s=AAPL,MSFT,NVDA,TSLA,AMZN,1155.KL,1295.KL,1023.KL,5347.KL&region=US&lang=en-US',
+  ],
   theedgemalaysia: ['https://www.theedgemarkets.com/rss.xml'],
   cnbc: ['https://www.cnbc.com/id/10000664/device/rss/rss.html'],
 }
@@ -156,6 +172,8 @@ export function sourceKey(id: NewsSourceId, keys: ServerKeys): string {
   switch (id) {
     case 'finnhub':
       return keys.finnhub
+    case 'newsdata':
+      return keys.newsData
     case 'alphavantage':
       return keys.alphavantage
     default:

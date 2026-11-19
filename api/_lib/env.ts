@@ -14,6 +14,7 @@ export interface ServerKeys {
   fmp: string
   twelvedata: string
   tiingo: string
+  newsData: string
   cronSecret: string
   redisUrl: string
   redisToken: string
@@ -43,6 +44,7 @@ export function loadKeys(): ServerKeys {
     fmp: read('FMP_API_KEY'),
     twelvedata: read('TWELVEDATA_API_KEY', 'TWELVE_DATA_API_KEY'),
     tiingo: read('TIINGO_API_KEY'),
+    newsData: read('NEWS_DATA_API_KEY', 'NEWSDATA_API_KEY'),
     cronSecret: read('CRON_SECRET'),
     redisUrl: read('UPSTASH_REDIS_REST_URL', 'KV_REST_API_URL'),
     redisToken: read('UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_TOKEN'),
