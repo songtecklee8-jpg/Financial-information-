@@ -21,6 +21,8 @@ export interface ServerKeys {
   twelvedata: string
   tiingo: string
   newsData: string
+  moomooKey: string
+  moomooSecret: string
   cronSecret: string
   redisUrl: string
   redisToken: string
@@ -57,6 +59,8 @@ export function loadKeys(): ServerKeys {
     twelvedata: read('TWELVEDATA_API_KEY', 'TWELVE_DATA_API_KEY'),
     tiingo: read('TIINGO_API_KEY'),
     newsData: read('NEWS_DATA_API_KEY', 'NEWSDATA_API_KEY'),
+    moomooKey: read('MOOMOO_API_KEY', 'MOOMOO_APP_ID'),
+    moomooSecret: read('MOOMOO_SECRET_KEY', 'MOOMOO_SECRET', 'MOOMOO_API_SECRET'),
     cronSecret: read('CRON_SECRET'),
     redisUrl: read('UPSTASH_REDIS_REST_URL', 'KV_REST_API_URL'),
     redisToken: read('UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_TOKEN'),

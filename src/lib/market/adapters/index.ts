@@ -1,5 +1,6 @@
 import type { ProviderId } from '@/types'
 import type { ProviderAdapter } from '@/lib/market/registry'
+import { moomooAdapter } from './moomoo'
 import { finnhubAdapter } from './finnhub'
 import { alpacaAdapter } from './alpaca'
 import { fmpAdapter } from './fmp'
@@ -11,6 +12,7 @@ import { coingeckoAdapter } from './coingecko'
 import { twelvedataAdapter } from './twelvedata'
 
 export const ADAPTERS: Record<ProviderId, ProviderAdapter> = {
+  moomoo: moomooAdapter,
   finnhub: finnhubAdapter,
   alpaca: alpacaAdapter,
   fmp: fmpAdapter,
@@ -23,5 +25,5 @@ export const ADAPTERS: Record<ProviderId, ProviderAdapter> = {
 }
 
 export function adapterFor(id: ProviderId): ProviderAdapter {
-  return ADAPTERS[id]
+  return ADAPTERS[id] ?? yahooAdapter
 }

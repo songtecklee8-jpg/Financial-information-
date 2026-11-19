@@ -214,6 +214,7 @@ export interface ApiSettings {
 
 /** 已接入的行情 / 新闻数据引擎 */
 export type ProviderId =
+  | 'moomoo'
   | 'finnhub'
   | 'alpaca'
   | 'fmp'

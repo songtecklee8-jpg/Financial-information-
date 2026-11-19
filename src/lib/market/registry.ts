@@ -97,6 +97,27 @@ const caps = (patch: Partial<ProviderCapabilities>): ProviderCapabilities => ({
 })
 
 export const PROVIDER_META: Record<ProviderId, ProviderMeta> = {
+  moomoo: {
+    id: 'moomoo',
+    label: 'Moomoo (富途)',
+    vendor: 'Moomoo OpenAPI / Futu',
+    requiresKey: true,
+    requiresSecret: true,
+    keyLabel: 'App ID / Key',
+    secretLabel: 'Secret Token',
+    keyUrl: 'https://openapi.moomoo.com/',
+    accent: 'text-bull',
+    dot: 'bg-bull',
+    note: '富途 Moomoo 官方极速实时行情与盘口，美股与马股（.KL）最高优先级权威源',
+    caps: caps({
+      candles: true,
+      fundamentals: true,
+      intervals: ['1m', '5m', '15m', '1h', '1d', '1w', '1mo'],
+      historyYears: 30,
+      us: true,
+      bursa: true,
+    }),
+  },
   finnhub: {
     id: 'finnhub',
     label: 'Finnhub',
@@ -403,6 +424,7 @@ export function pickSourceInterval(
 
 /** 美股：报价与 K 线链路 */
 export const US_CHAIN: ProviderId[] = [
+  'moomoo',
   'finnhub',
   'alpaca',
   'fmp',
@@ -412,14 +434,14 @@ export const US_CHAIN: ProviderId[] = [
   'twelvedata',
 ]
 
-/** 马股（Bursa .KL）：Yahoo 覆盖最好，其后为具备 .KL 能力的引擎 */
-export const BURSA_CHAIN: ProviderId[] = ['yahoo', 'fmp', 'twelvedata', 'alphavantage', 'finnhub']
+/** 马股（Bursa .KL）与全球：Moomoo 优先，其后为 Yahoo、FMP 等 */
+export const BURSA_CHAIN: ProviderId[] = ['moomoo', 'yahoo', 'fmp', 'twelvedata', 'alphavantage', 'finnhub']
 
 /** 数字资产：Binance 优先，CoinGecko 兜底，Yahoo 最后 */
 export const CRYPTO_CHAIN: ProviderId[] = ['binance', 'coingecko', 'yahoo']
 
 /** 长历史（10Y / MAX）优先链路：这些引擎一次请求即可给出全历史 */
-export const LONG_HISTORY_CHAIN: ProviderId[] = ['tiingo', 'yahoo', 'fmp', 'twelvedata', 'alphavantage']
+export const LONG_HISTORY_CHAIN: ProviderId[] = ['moomoo', 'tiingo', 'yahoo', 'fmp', 'twelvedata', 'alphavantage']
 
 export function chainFor(opts: {
   assetClass: 'equity' | 'crypto'
