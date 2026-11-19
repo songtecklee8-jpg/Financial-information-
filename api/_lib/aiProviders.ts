@@ -182,9 +182,9 @@ const PROVIDER_SPECS: Record<BackupProviderId, ProviderSpec> = {
   groq: {
     id: 'groq',
     models: {
-      lite: ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'],
-      flash: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
-      pro: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+      lite: ['openai/gpt-oss-20b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-120b'],
+      flash: ['openai/gpt-oss-20b', 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b'],
+      pro: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'],
     },
     supportsJsonFormat: true,
     endpoint: () => 'https://api.groq.com/openai/v1/chat/completions',
@@ -359,8 +359,10 @@ export async function callBackupProvider(
       lastError = error
       const status = (error as { status?: number }).status
       const msg = error instanceof Error ? error.message : String(error)
+      const isModelNotFound = status === 404 || /model_not_found|decommissioned|not_found|does not exist/i.test(msg)
       recordProviderFailure(providerId, status, msg)
       if (status === 401 || status === 403 || status === 429) break
+      if (isModelNotFound) continue
     }
   }
   throw lastError instanceof Error ? lastError : new Error(`${providerId} 调用失败`)

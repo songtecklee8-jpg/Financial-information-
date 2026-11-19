@@ -26,7 +26,7 @@ export const AI_BACKUP_PROVIDERS: AiBackupProviderMeta[] = [
     keyLabel: 'Groq API Key',
     keyPlaceholder: 'gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxx',
     role: '极速新闻翻译/摘要与高频短文本降级',
-    note: 'OpenAI 兼容接口（Llama 3.1 8B / Llama 3.3 70B），响应极快，专用于高频新闻批量翻译、摘要与极速降级。',
+    note: 'OpenAI 兼容接口（gpt-oss-20b / gpt-oss-120b），响应极快，专用于高频新闻批量翻译、摘要与极速降级。',
     docsUrl: 'https://console.groq.com/keys',
   },
   {
@@ -222,9 +222,9 @@ const CLIENT_SPECS: Record<AiFallbackProviderId, ClientProviderSpec> = {
   groq: {
     id: 'groq',
     models: {
-      lite: ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'],
-      flash: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
-      pro: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+      lite: ['openai/gpt-oss-20b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-120b'],
+      flash: ['openai/gpt-oss-20b', 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b'],
+      pro: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'],
     },
     supportsJsonFormat: true,
     endpoint: () => 'https://api.groq.com/openai/v1/chat/completions',
@@ -435,8 +435,10 @@ async function callSingleClientProvider(
         lastError = error
       }
       const msg = lastError instanceof Error ? lastError.message : String(lastError)
+      const isModelNotFound = status === 404 || /model_not_found|decommissioned|not_found|does not exist/i.test(msg)
       recordClientProviderFailure(id, status, msg)
       if (status === 401 || status === 403 || status === 429) break
+      if (isModelNotFound) continue
     }
   }
 
