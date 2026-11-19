@@ -196,9 +196,9 @@ const PROVIDER_SPECS: Record<BackupProviderId, ProviderSpec> = {
   openrouter: {
     id: 'openrouter',
     models: {
-      lite: ['meta-llama/llama-3.3-70b-instruct:free', 'openrouter/free'],
-      flash: ['meta-llama/llama-3.3-70b-instruct:free', 'google/gemma-3-27b-it:free', 'openrouter/free'],
-      pro: ['meta-llama/llama-3.3-70b-instruct:free', 'google/gemma-3-27b-it:free', 'openrouter/free'],
+      lite: ['meta-llama/llama-3.3-70b-instruct:free', 'deepseek/deepseek-r1:free', 'google/gemma-3-27b-it:free', 'openrouter/free'],
+      flash: ['meta-llama/llama-3.3-70b-instruct:free', 'deepseek/deepseek-r1:free', 'google/gemma-3-27b-it:free', 'openrouter/free'],
+      pro: ['meta-llama/llama-3.3-70b-instruct:free', 'deepseek/deepseek-r1:free', 'google/gemma-3-27b-it:free', 'openrouter/free'],
     },
     supportsJsonFormat: false,
     endpoint: () => 'https://openrouter.ai/api/v1/chat/completions',
