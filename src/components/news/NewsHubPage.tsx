@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/Badge'
 import { NewsReaderPanel } from '@/components/news/NewsReaderPanel'
 import { useNews } from '@/hooks/useNews'
 import { cn } from '@/lib/cn'
+import { hasAnyAiConfigured } from '@/lib/aiFallback'
 import { formatRelativeTime } from '@/lib/format'
 import { translateArticles, aiRoute, modelDisplayName } from '@/lib/gemini'
 import { NEWS_SOURCES, sourceMeta } from '@/lib/news'
@@ -78,11 +79,11 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
   const [translating, setTranslating] = useState(false)
   const translateAbort = useRef<AbortController | null>(null)
 
-  const hasGemini = settings.geminiKey.trim().length > 0
+  const hasAi = hasAnyAiConfigured(settings)
   const articles = translated ?? news.articles
 
   const autoTranslate = useCallback(async () => {
-    if (!hasGemini || news.articles.length === 0) return
+    if (!hasAi || news.articles.length === 0) return
     translateAbort.current?.abort()
     const controller = new AbortController()
     translateAbort.current = controller
@@ -104,11 +105,8 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
       if (!controller.signal.aborted) setTranslating(false)
     }
   }, [
-    hasGemini,
+    hasAi,
     news.articles,
-    settings.geminiKey,
-    settings.aiRouting,
-    settings.geminiModel,
     settings,
   ])
 
@@ -116,12 +114,12 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
   useEffect(() => {
     setTranslated(null)
     setTranslatedModel(null)
-    if (!hasGemini) return
+    if (!hasAi) return
     const pending = news.articles.some((item) => item.lang === 'en' && item.translation !== 'done')
     if (!pending) return
     autoTranslate()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [news.articles, hasGemini, settings.aiRouting, settings.geminiModel])
+  }, [news.articles, hasAi, settings.aiRouting, settings.geminiModel, settings.aiFallback])
 
   useEffect(() => () => translateAbort.current?.abort(), [])
 
@@ -199,10 +197,10 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
 
         {/* 翻译状态条 */}
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-line/60 pt-2.5 font-mono text-[10.5px]">
-          {hasGemini ? (
+          {hasAi ? (
             translating ? (
               <span className="flex items-center gap-1.5 text-gold">
-                <LoaderCircle className="size-3 animate-spin" /> Gemini 正在翻译为华文…
+                <LoaderCircle className="size-3 animate-spin" /> AI 正在批量翻译为华文…
               </span>
             ) : (
               <span className="flex items-center gap-1.5 text-bull">
@@ -220,7 +218,7 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
               onClick={onOpenSettings}
               className="flex items-center gap-1.5 text-gold transition hover:text-gold/80"
             >
-              <KeyRound className="size-3" /> 配置 Gemini Key 可自动翻译为华文并启用 AI 推演
+              <KeyRound className="size-3" /> 配置 Gemini 或免费备用 AI Key 可自动翻译为华文并启用推演
             </button>
           )}
           <span className="text-faint">

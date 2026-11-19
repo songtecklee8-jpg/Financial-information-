@@ -171,7 +171,7 @@ export function AiChatDock({
                   {hasGemini
                     ? usedModel
                       ? `Powered by ${modelDisplayName(usedModel)}`
-                      : 'Gemini 三级路由'
+                      : 'Gemini 优先 / 多引擎兜底'
                     : '本地模式'}
                 </div>
               </div>
@@ -262,7 +262,7 @@ export function AiChatDock({
               className="flex items-center gap-1.5 border-t border-line bg-gold/[0.06] px-3.5 py-2 text-left font-mono text-[10.5px] text-gold transition hover:bg-gold/12"
             >
               <Lock className="size-3" />
-              未配置 Gemini Key，当前为本地模式 · 点击前往配置
+              未配置 AI Key，当前为本地模式 · 点击前往配置
             </button>
           )}
 

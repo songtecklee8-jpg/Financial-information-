@@ -9,6 +9,7 @@ import type {
   EarningsPayload,
   UsEarningsEvent,
 } from '@/types'
+import { hasAnyAiConfigured } from '@/lib/aiFallback'
 import { aiRoute, generateText } from '@/lib/gemini'
 import { requestJson } from '@/lib/market/net'
 import { RESEARCH_DOCTRINE } from '@/lib/researchDoctrine'
@@ -383,7 +384,7 @@ export async function buildBursaEarningsDetailBrowser(
     generatedAt: now,
   }
 
-  if (!settings.geminiKey.trim()) return fallback
+  if (!hasAnyAiConfigured(settings)) return fallback
 
   try {
     const { text, model } = await generateText({
@@ -682,7 +683,7 @@ export async function analyzeBondAuctionsBrowser(
     generatedAt: now,
   }
 
-  if (!settings.geminiKey.trim()) return fallback
+  if (!hasAnyAiConfigured(settings)) return fallback
 
   try {
     const { text, model } = await generateText({

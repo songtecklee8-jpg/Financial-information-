@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import express, { type Request, type Response } from 'express'
 
+import aiCompleteHandler from './api/ai/complete.js'
 import bondsHandler from './api/bonds.js'
 import bondsAnalyzeHandler from './api/bonds/analyze.js'
 import cronSyncHandler from './api/cron/sync.js'
@@ -45,6 +46,7 @@ async function startServer() {
   app.all('/api/earnings/detail', adapt(earningsDetailHandler))
   app.all('/api/bonds', adapt(bondsHandler))
   app.all('/api/bonds/analyze', adapt(bondsAnalyzeHandler))
+  app.all('/api/ai/complete', adapt(aiCompleteHandler))
 
   if (process.env.NODE_ENV === 'production') {
     const distDir = path.resolve(__dirname, 'dist')

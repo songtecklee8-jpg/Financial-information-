@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Eye, EyeOff, ExternalLink, LoaderCircle, PlugZap, ShieldCheck } from 'lucide-react'
 
 import type {
+  AiFallbackConfig,
+  AiFallbackProviderId,
   AiRoutingMode,
   ApiSettings,
   ProviderConfig,
@@ -9,6 +11,14 @@ import type {
   ProviderId,
 } from '@/types'
 import { Modal } from '@/components/ui/Modal'
+import {
+  AI_BACKUP_PROVIDERS,
+  countConfiguredBackupAi,
+  isBackupProviderConfigured,
+  normalizeAiFallback,
+  testBackupProviderClient,
+  type AiBackupProviderMeta,
+} from '@/lib/aiFallback'
 import { TIER_LABEL, TIER_MODEL, TIER_ORDER, TIER_ROLE } from '@/lib/gemini'
 import { DEFAULT_API_SETTINGS } from '@/hooks/useApiSettings'
 import { useProviderStatuses } from '@/hooks/useProviderStatuses'
@@ -216,6 +226,171 @@ function ProviderCard({
   )
 }
 
+interface BackupTestResult {
+  state: 'testing' | 'ok' | 'error'
+  model?: string
+  message?: string
+}
+
+function getBackupKeys(id: AiFallbackProviderId, config: AiFallbackConfig): { primary: string; secondary: string } {
+  switch (id) {
+    case 'groq':
+      return { primary: config.groqKey, secondary: '' }
+    case 'openrouter':
+      return { primary: config.openrouterKey, secondary: '' }
+    case 'mistral':
+      return { primary: config.mistralKey, secondary: '' }
+    case 'cloudflare':
+      return { primary: config.cloudflareApiToken, secondary: config.cloudflareAccountId }
+    case 'nvidia':
+      return { primary: config.nvidiaKey, secondary: '' }
+  }
+}
+
+function BackupProviderCard({
+  meta,
+  config,
+  status,
+  onPatch,
+  onTest,
+}: {
+  meta: AiBackupProviderMeta
+  config: AiFallbackConfig
+  status?: BackupTestResult
+  onPatch: (patch: Partial<AiFallbackConfig>) => void
+  onTest: () => void
+}) {
+  const configured = isBackupProviderConfigured(meta.id, config)
+  const testing = status?.state === 'testing'
+  const { primary, secondary } = getBackupKeys(meta.id, config)
+
+  const setPrimary = (value: string) => {
+    switch (meta.id) {
+      case 'groq':
+        onPatch({ groqKey: value })
+        break
+      case 'openrouter':
+        onPatch({ openrouterKey: value })
+        break
+      case 'mistral':
+        onPatch({ mistralKey: value })
+        break
+      case 'cloudflare':
+        onPatch({ cloudflareApiToken: value })
+        break
+      case 'nvidia':
+        onPatch({ nvidiaKey: value })
+        break
+    }
+  }
+
+  const dotClass = testing
+    ? 'bg-ice'
+    : status?.state === 'ok'
+      ? 'bg-bull live-dot'
+      : status?.state === 'error'
+        ? 'bg-bear'
+        : configured
+          ? 'bg-ice'
+          : 'bg-faint'
+
+  const statusText = testing
+    ? '测试中…'
+    : status?.state === 'ok'
+      ? `连通正常${status.model ? ` · ${status.model}` : ''}`
+      : status?.state === 'error'
+        ? `测试失败${status.message ? `：${status.message.slice(0, 46)}` : ''}`
+        : configured
+          ? '已就绪 · 随时可顶替'
+          : '未配置（自动跳过）'
+
+  const statusTone = testing
+    ? 'text-ice'
+    : status?.state === 'ok'
+      ? 'text-bull'
+      : status?.state === 'error'
+        ? 'text-bear'
+        : configured
+          ? 'text-ice'
+          : 'text-faint'
+
+  return (
+    <div className="rounded-lg border border-line bg-panel-2/60 p-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={cn('size-2 shrink-0 rounded-full', dotClass)} />
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className={cn('font-mono text-[12px] font-semibold', meta.accent)}>{meta.label}</span>
+              <span className="truncate font-mono text-[10px] text-faint">{meta.vendor}</span>
+            </div>
+            <div className={cn('truncate font-mono text-[10px]', statusTone)} title={status?.message}>
+              {statusText}
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onTest}
+          disabled={testing || !configured}
+          title={configured ? '测试当前备用 AI 连通性' : '请先填入 API Key 后测试'}
+          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line-2 px-2 py-1 font-mono text-[10px] text-dim transition hover:border-ice/50 hover:text-ice disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {testing ? <LoaderCircle className="size-3 animate-spin" /> : <PlugZap className="size-3" />}
+          测试
+        </button>
+      </div>
+
+      <div className="mt-2 space-y-2">
+        {meta.secondaryLabel && (
+          <div>
+            <label className="font-mono text-[10px] tracking-[0.1em] text-faint uppercase">
+              {meta.secondaryLabel}
+            </label>
+            <input
+              type="text"
+              value={secondary}
+              spellCheck={false}
+              autoComplete="off"
+              placeholder={meta.secondaryPlaceholder}
+              onChange={(event) => onPatch({ cloudflareAccountId: event.target.value })}
+              className="mt-1 w-full rounded-md border border-line bg-void/70 px-2.5 py-1.5 font-mono text-[11.5px] text-ink transition placeholder:text-faint/60 focus:border-ice/55"
+            />
+          </div>
+        )}
+        <div>
+          <label className="font-mono text-[10px] tracking-[0.1em] text-faint uppercase">
+            {meta.keyLabel}
+          </label>
+          <input
+            type="password"
+            value={primary}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder={meta.keyPlaceholder}
+            onChange={(event) => setPrimary(event.target.value)}
+            className="mt-1 w-full rounded-md border border-line bg-void/70 px-2.5 py-1.5 font-mono text-[11.5px] text-ink transition placeholder:text-faint/60 focus:border-ice/55"
+          />
+        </div>
+      </div>
+
+      <p className="mt-2 text-[10.5px] leading-relaxed text-faint">
+        <span className="text-dim">{meta.role}：</span>
+        {meta.note}{' '}
+        <a
+          href={meta.docsUrl}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="inline-flex items-center gap-0.5 text-ice/85 hover:text-ice"
+        >
+          获取免费 Key
+          <ExternalLink className="size-2.5" />
+        </a>
+      </p>
+    </div>
+  )
+}
+
 export function ApiSettingsModal({
   open,
   onClose,
@@ -223,8 +398,12 @@ export function ApiSettingsModal({
   onSave,
   onReset,
 }: ApiSettingsModalProps) {
-  const [draft, setDraft] = useState<ApiSettings>(settings)
+  const [draft, setDraft] = useState<ApiSettings>(() => ({
+    ...settings,
+    aiFallback: normalizeAiFallback(settings.aiFallback),
+  }))
   const [testingId, setTestingId] = useState<ProviderId | null>(null)
+  const [backupStatus, setBackupStatus] = useState<Partial<Record<AiFallbackProviderId, BackupTestResult>>>({})
   const draftRef = useRef(draft)
   const abortRef = useRef<AbortController | null>(null)
   const statuses = useProviderStatuses()
@@ -232,7 +411,13 @@ export function ApiSettingsModal({
   draftRef.current = draft
 
   useEffect(() => {
-    if (open) setDraft(settings)
+    if (open) {
+      setDraft({
+        ...settings,
+        aiFallback: normalizeAiFallback(settings.aiFallback),
+      })
+      setBackupStatus({})
+    }
   }, [open, settings])
 
   useEffect(() => () => abortRef.current?.abort(), [])
@@ -246,6 +431,15 @@ export function ApiSettingsModal({
       ).length,
     [draft],
   )
+
+  const fallbackConfig = useMemo(() => normalizeAiFallback(draft.aiFallback), [draft.aiFallback])
+  const backupConfiguredCount = useMemo(() => countConfiguredBackupAi(fallbackConfig), [fallbackConfig])
+
+  const patchFallback = (patch: Partial<AiFallbackConfig>) =>
+    setDraft((current) => ({
+      ...current,
+      aiFallback: { ...normalizeAiFallback(current.aiFallback), ...patch },
+    }))
 
   const patchProvider = (id: ProviderId, next: ProviderConfig) =>
     setDraft((current) => ({ ...current, providers: { ...current.providers, [id]: next } }))
@@ -262,6 +456,21 @@ export function ApiSettingsModal({
     }
   }
 
+  const runBackupTest = async (id: AiFallbackProviderId) => {
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    setBackupStatus((prev) => ({ ...prev, [id]: { state: 'testing' } }))
+    const res = await testBackupProviderClient(id, normalizeAiFallback(draftRef.current.aiFallback), controller.signal)
+    if (controller.signal.aborted) return
+    setBackupStatus((prev) => ({
+      ...prev,
+      [id]: res.ok
+        ? { state: 'ok', model: res.model }
+        : { state: 'error', message: res.message ?? '连接失败' },
+    }))
+  }
+
   return (
     <Modal
       open={open}
@@ -276,6 +485,7 @@ export function ApiSettingsModal({
             onClick={() => {
               onReset()
               setDraft(DEFAULT_API_SETTINGS)
+              setBackupStatus({})
             }}
             className="rounded-lg border border-line px-3 py-1.5 font-mono text-[11px] text-dim transition hover:border-bear/50 hover:text-bear"
           >
@@ -300,10 +510,20 @@ export function ApiSettingsModal({
                     secretKey: config?.secretKey?.trim() ?? '',
                   }
                 }
+                const fb = normalizeAiFallback(draft.aiFallback)
                 onSave({
                   geminiKey: draft.geminiKey.trim(),
                   geminiModel: draft.geminiModel.trim(),
                   aiRouting: draft.aiRouting,
+                  aiFallback: {
+                    enabled: fb.enabled,
+                    groqKey: fb.groqKey.trim(),
+                    openrouterKey: fb.openrouterKey.trim(),
+                    mistralKey: fb.mistralKey.trim(),
+                    cloudflareAccountId: fb.cloudflareAccountId.trim(),
+                    cloudflareApiToken: fb.cloudflareApiToken.trim(),
+                    nvidiaKey: fb.nvidiaKey.trim(),
+                  },
                   providers,
                 })
                 onClose()
@@ -442,6 +662,60 @@ export function ApiSettingsModal({
                 填写后将作为全部任务的优先模型，失败时仍自动向下降级；留空则完全交由三级路由分配。
               </p>
             </div>
+          </div>
+        </div>
+
+        {/* 永久免费多服务商兜底与并发分流（备用 AI 引擎） */}
+        <div className="rounded-xl border border-ice/25 bg-ice/[0.03] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-[11px] font-semibold tracking-[0.14em] text-ice uppercase">
+                永久免费多服务商兜底与并发分流（备用援军）
+              </span>
+              <span className="rounded border border-ice/35 bg-ice/10 px-1.5 py-[1px] font-mono text-[10px] text-ice">
+                已配置 {backupConfiguredCount} / 5 个
+              </span>
+            </div>
+
+            <button
+              type="button"
+              role="switch"
+              aria-checked={fallbackConfig.enabled}
+              onClick={() => patchFallback({ enabled: !fallbackConfig.enabled })}
+              className={cn(
+                'inline-flex items-center gap-2 rounded-lg border px-2.5 py-1 font-mono text-[10.5px] transition',
+                fallbackConfig.enabled
+                  ? 'border-bull/50 bg-bull/12 text-bull'
+                  : 'border-line-2 bg-void/60 text-faint hover:text-dim',
+              )}
+            >
+              <span
+                className={cn(
+                  'inline-block size-2 rounded-full',
+                  fallbackConfig.enabled ? 'bg-bull' : 'bg-faint',
+                )}
+              />
+              仅在 Gemini 限额/多任务并发时启用兜底：{fallbackConfig.enabled ? '已开启' : '已关闭'}
+            </button>
+          </div>
+
+          <p className="mt-2 text-[11px] leading-relaxed text-dim">
+            所有 AI 任务<span className="text-ink">默认优先走上方 Gemini 链路</span>；仅当 Gemini 遇到 429 限流、
+            配额耗尽、超时报错、未配置 Gemini Key，或批量翻译/研判并发排队时，自动分流切换至以下已填入 Key 的免费备用接口。
+            未填写的服务商会自动跳过；若全部在线引擎不可用，则平滑回退至本地量化与启发式引擎。
+          </p>
+
+          <div className="mt-3 grid grid-cols-1 gap-2.5 lg:grid-cols-2">
+            {AI_BACKUP_PROVIDERS.map((meta) => (
+              <BackupProviderCard
+                key={meta.id}
+                meta={meta}
+                config={fallbackConfig}
+                status={backupStatus[meta.id]}
+                onPatch={patchFallback}
+                onTest={() => void runBackupTest(meta.id)}
+              />
+            ))}
           </div>
         </div>
 

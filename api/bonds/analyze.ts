@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
+import { mergeBackupKeys } from '../_lib/aiProviders.js'
 import { analyzeBondAuctions } from '../_lib/bonds.js'
 import { loadKeys } from '../_lib/env.js'
 import type { BondAuctionItem, BondMarketBenchmark } from '../_lib/types.js'
@@ -25,6 +26,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   const keys = loadKeys()
   const geminiKey = str(body.geminiKey) || keys.gemini
+  const backupKeys = mergeBackupKeys(keys, body.aiFallback)
   const aiRouting = str(body.aiRouting) || 'auto'
   const geminiModel = str(body.geminiModel)
 
@@ -32,6 +34,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     geminiKey,
     aiRouting,
     geminiModel,
+    backupKeys,
   })
 
   res.status(200).json({ ok: true, analysis })

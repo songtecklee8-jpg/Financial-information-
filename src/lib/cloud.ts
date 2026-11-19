@@ -1,4 +1,5 @@
 import type {
+  AiFallbackConfig,
   ApiSettings,
   BondAuctionAnalysis,
   BondAuctionItem,
@@ -136,6 +137,7 @@ export interface NewsDetailRequest {
   aiRouting?: string
   geminiModel?: string
   geminiKey?: string
+  aiFallback?: AiFallbackConfig
 }
 
 /** 请求云端新闻详情接口；失败返回 null（由调用方回落本地推演） */
@@ -166,6 +168,7 @@ export async function fetchNewsDetail(req: NewsDetailRequest): Promise<NewsDetai
       aiRouting: req.aiRouting ?? '',
       geminiModel: req.geminiModel ?? '',
       geminiKey: req.geminiKey ?? '',
+      aiFallback: req.aiFallback,
     }),
   })
 
@@ -219,6 +222,7 @@ export async function fetchEarningsCalendar(
       geminiKey: settings.geminiKey,
       aiRouting: settings.aiRouting,
       geminiModel: settings.geminiModel,
+      aiFallback: settings.aiFallback,
       refresh,
     },
     18_000,
@@ -238,6 +242,7 @@ export async function fetchBursaEarningsDetail(
       geminiKey: settings.geminiKey,
       aiRouting: settings.aiRouting,
       geminiModel: settings.geminiModel,
+      aiFallback: settings.aiFallback,
       refresh,
     },
     AI_ENDPOINT_TIMEOUT_MS,
@@ -255,6 +260,7 @@ export async function fetchBondsTracker(
       geminiKey: settings.geminiKey,
       aiRouting: settings.aiRouting,
       geminiModel: settings.geminiModel,
+      aiFallback: settings.aiFallback,
       refresh,
     },
     18_000,
@@ -275,6 +281,7 @@ export async function analyzeBondAuctions(
       geminiKey: settings.geminiKey,
       aiRouting: settings.aiRouting,
       geminiModel: settings.geminiModel,
+      aiFallback: settings.aiFallback,
     },
     AI_ENDPOINT_TIMEOUT_MS,
   )

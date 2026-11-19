@@ -185,7 +185,7 @@ export function AiVerdictCard({
             className="inline-flex items-center gap-1.5 rounded-lg border border-gold/40 bg-gold/10 px-3 py-1.5 font-mono text-[11px] text-gold transition hover:bg-gold/20"
           >
             <Lock className="size-3.5" />
-            配置 Gemini Key 解锁深度诊断
+            配置 AI Key 解锁深度诊断
           </button>
         )}
       </div>

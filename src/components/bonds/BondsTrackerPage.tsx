@@ -22,6 +22,7 @@ import {
   analyzeBondAuctionsBrowser,
   fetchBondsTrackerBrowser,
 } from '@/lib/earningsBondsClient'
+import { hasAnyAiConfigured } from '@/lib/aiFallback'
 import { cn } from '@/lib/cn'
 import { formatDateTime } from '@/lib/format'
 import { modelDisplayName } from '@/lib/gemini'
@@ -51,7 +52,7 @@ export function BondsTrackerPage({ settings, onOpenSettings }: BondsTrackerPageP
   const [analysis, setAnalysis] = useState<BondAuctionAnalysis | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
 
-  const hasGemini = settings.geminiKey.trim().length > 0
+  const hasAi = hasAnyAiConfigured(settings)
 
   const loadBonds = useCallback(
     async (refresh = false) => {
@@ -337,7 +338,7 @@ export function BondsTrackerPage({ settings, onOpenSettings }: BondsTrackerPageP
                 subtitle="遵循 Pro → Flash → Flash-Lite 自动降级熔断保护"
                 actions={
                   <div className="flex items-center gap-1.5">
-                    {!hasGemini && (
+                    {!hasAi && (
                       <button
                         type="button"
                         onClick={onOpenSettings}

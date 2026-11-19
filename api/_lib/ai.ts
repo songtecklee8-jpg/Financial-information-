@@ -5,6 +5,7 @@
  * - buildNewsDetail：单篇核心摘要要点 + 五大资产推演 + 全文整篇翻译（gemini-2.5-flash）
  */
 
+import { type ServerAiBackupKeys, hasConfiguredBackup } from './aiProviders.js'
 import {
   SERVER_FLASH_MODEL,
   SERVER_LITE_MODEL,
@@ -53,53 +54,68 @@ function normalizeSentiment(value: unknown): 'bullish' | 'bearish' | 'neutral' {
 
 /**
  * 对英文新闻批量执行华文翻译 + 摘要 + 情绪标签，直接原地补全到文章对象。
- * 返回实际命中的模型与完成翻译的条数。
+ * 并发批处理：默认优先走 gemini-2.5-flash-lite；当并发较高或 Gemini 限流/未配置时，
+ * 自动把部分批次安全分流/降级至已配置的永久免费备用服务商。
  */
 export async function enrichArticles(
   articles: ServerArticle[],
   apiKey: string,
+  backupKeys?: ServerAiBackupKeys,
 ): Promise<{ model: string | null; translatedCount: number }> {
   const pending = articles.filter((item) => item.lang === 'en')
-  if (!apiKey || pending.length === 0) {
+  if ((!apiKey && !hasConfiguredBackup(backupKeys)) || pending.length === 0) {
     return { model: null, translatedCount: articles.filter((a) => a.translation === 'done').length }
   }
 
-  let model: string | null = null
+  const groups = chunk(pending, BATCH_SIZE)
+  const usedModels = new Set<string>()
+  let cursor = 0
+  const concurrency = Math.min(3, groups.length)
 
-  for (const group of chunk(pending, BATCH_SIZE)) {
-    const payload = group.map((item) => ({
-      id: item.id,
-      title: item.title,
-      summary: item.summary.slice(0, 400),
-    }))
-    try {
-      const result = await generateServer({
-        apiKey,
-        model: SERVER_LITE_MODEL,
-        system: `${SERVER_RESEARCH_DOCTRINE}\n\n${BATCH_INSTRUCTION}`,
-        prompt: JSON.stringify(payload),
-        temperature: 0.2,
-        maxOutputTokens: 4096,
-        responseSchema: BATCH_SCHEMA,
-      })
-      model = result.model
-      const parsed = parseJsonLoose<{ items?: BatchItem[] }>(result.text)
-      const index = new Map(group.map((item) => [item.id, item]))
-      for (const row of parsed?.items ?? []) {
-        const target = index.get(row.id)
-        if (!target) continue
-        if (row.titleZh) target.titleZh = row.titleZh.trim()
-        if (row.summaryZh) target.summaryZh = row.summaryZh.trim()
-        target.sentiment = normalizeSentiment(row.sentiment)
-        target.translation = 'done'
+  await Promise.all(
+    Array.from({ length: concurrency }, async () => {
+      while (cursor < groups.length) {
+        const group = groups[cursor]
+        cursor += 1
+        if (!group) continue
+        const payload = group.map((item) => ({
+          id: item.id,
+          title: item.title,
+          summary: item.summary.slice(0, 400),
+        }))
+        try {
+          const result = await generateServer({
+            apiKey,
+            model: SERVER_LITE_MODEL,
+            system: `${SERVER_RESEARCH_DOCTRINE}\n\n${BATCH_INSTRUCTION}`,
+            prompt: JSON.stringify(payload),
+            temperature: 0.2,
+            maxOutputTokens: 4096,
+            responseSchema: BATCH_SCHEMA,
+            backupKeys,
+            allowConcurrencyOffload: groups.length > 1,
+          })
+          usedModels.add(result.model)
+          const parsed = parseJsonLoose<{ items?: BatchItem[] }>(result.text)
+          const index = new Map(group.map((item) => [item.id, item]))
+          for (const row of parsed?.items ?? []) {
+            const target = index.get(row.id)
+            if (!target) continue
+            if (row.titleZh) target.titleZh = row.titleZh.trim()
+            if (row.summaryZh) target.summaryZh = row.summaryZh.trim()
+            target.sentiment = normalizeSentiment(row.sentiment)
+            target.translation = 'done'
+          }
+        } catch {
+          // 该批次失败：保留原文，继续下一批
+        }
       }
-    } catch {
-      // 该批次失败：保留原文，继续下一批
-    }
-  }
+    }),
+  )
 
+  const modelList = Array.from(usedModels)
   return {
-    model,
+    model: modelList.length > 0 ? modelList.join(' + ') : null,
     translatedCount: articles.filter((a) => a.translation === 'done').length,
   }
 }
@@ -175,11 +191,13 @@ export interface BuildDetailInput {
   apiKey: string
   /** 可选模型覆盖（用于支持 Pro / Flash / Lite 路由模式） */
   model?: string
+  /** 永久免费备用服务商凭证 */
+  backupKeys?: ServerAiBackupKeys
 }
 
 /** 生成单篇新闻的深度详情（摘要要点 + 推演 + 全文翻译） */
 export async function buildNewsDetail(input: BuildDetailInput): Promise<NewsDetail> {
-  const { article, fullText, apiKey } = input
+  const { article, fullText, apiKey, backupKeys } = input
   const body = (fullText || article.summary || article.title).slice(0, 14_000)
   const now = new Date().toISOString()
 
@@ -199,7 +217,7 @@ export async function buildNewsDetail(input: BuildDetailInput): Promise<NewsDeta
     degraded: true,
   }
 
-  if (!apiKey) {
+  if (!apiKey && !hasConfiguredBackup(backupKeys)) {
     return {
       id: article.id,
       url: article.url,
@@ -227,6 +245,7 @@ export async function buildNewsDetail(input: BuildDetailInput): Promise<NewsDeta
     temperature: 0.35,
     maxOutputTokens: 8192,
     responseSchema: DETAIL_SCHEMA,
+    backupKeys,
   })
 
   const parsed =
@@ -260,7 +279,7 @@ export async function buildNewsDetail(input: BuildDetailInput): Promise<NewsDeta
     degraded: false,
   }
 
-  // 全文整篇翻译（仅英文原文需要）
+  // 全文整篇翻译（仅英文原文需要；支持多服务商并发分流避免挤压主任务配额）
   let fullTextZh = article.lang === 'zh' ? fullText : ''
   if (article.lang === 'en' && fullText) {
     try {
@@ -271,6 +290,8 @@ export async function buildNewsDetail(input: BuildDetailInput): Promise<NewsDeta
         prompt: fullText.slice(0, 14_000),
         temperature: 0.2,
         maxOutputTokens: 8192,
+        backupKeys,
+        allowConcurrencyOffload: true,
       })
       fullTextZh = translated.text.trim()
     } catch {

@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import type { AiRoutingMode, ApiSettings, ProviderConfig, ProviderId } from '@/types'
+import {
+  DEFAULT_AI_FALLBACK,
+  countConfiguredBackupAi,
+  hasAnyAiConfigured,
+  normalizeAiFallback,
+  setActiveAiFallbackConfig,
+} from '@/lib/aiFallback'
 import { PROVIDER_IDS, isProviderConfigured } from '@/lib/market/registry'
 
 /** v2 结构：providers 覆盖全部行情引擎；v1 的 twelveDataKey 会自动迁移 */
@@ -25,6 +32,7 @@ export const DEFAULT_API_SETTINGS: ApiSettings = {
   geminiKey: '',
   geminiModel: '',
   aiRouting: 'auto',
+  aiFallback: { ...DEFAULT_AI_FALLBACK },
   providers: emptyProviders(),
 }
 
@@ -60,6 +68,7 @@ function read(): ApiSettings {
       geminiKey: typeof parsed.geminiKey === 'string' ? parsed.geminiKey : '',
       geminiModel,
       aiRouting: readRouting(parsed.aiRouting),
+      aiFallback: normalizeAiFallback(parsed.aiFallback),
       providers,
     }
   } catch {
@@ -72,14 +81,23 @@ export interface ApiSettingsController {
   save: (next: ApiSettings) => void
   reset: () => void
   hasGemini: boolean
+  /** Gemini 或任一已启用的免费备用 AI 服务商是否就绪 */
+  hasAnyAi: boolean
+  /** 已配置密钥的免费备用 AI 服务商数量 */
+  backupAiCount: number
   /** 已配置（可参与故障转移）的行情引擎数量 */
   configuredCount: number
 }
 
 export function useApiSettings(): ApiSettingsController {
-  const [settings, setSettings] = useState<ApiSettings>(() => read())
+  const [settings, setSettings] = useState<ApiSettings>(() => {
+    const initial = read()
+    setActiveAiFallbackConfig(initial.aiFallback)
+    return initial
+  })
 
   useEffect(() => {
+    setActiveAiFallbackConfig(settings.aiFallback)
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
     } catch {
@@ -87,8 +105,19 @@ export function useApiSettings(): ApiSettingsController {
     }
   }, [settings])
 
-  const save = useCallback((next: ApiSettings) => setSettings(next), [])
-  const reset = useCallback(() => setSettings(DEFAULT_API_SETTINGS), [])
+  const save = useCallback((next: ApiSettings) => {
+    const normalized: ApiSettings = {
+      ...next,
+      aiFallback: normalizeAiFallback(next.aiFallback),
+    }
+    setActiveAiFallbackConfig(normalized.aiFallback)
+    setSettings(normalized)
+  }, [])
+
+  const reset = useCallback(() => {
+    setActiveAiFallbackConfig(DEFAULT_API_SETTINGS.aiFallback)
+    setSettings(DEFAULT_API_SETTINGS)
+  }, [])
 
   const configuredCount = PROVIDER_IDS.filter((id) =>
     isProviderConfigured(
@@ -103,6 +132,8 @@ export function useApiSettings(): ApiSettingsController {
     save,
     reset,
     hasGemini: settings.geminiKey.trim().length > 0,
+    hasAnyAi: hasAnyAiConfigured(settings),
+    backupAiCount: countConfiguredBackupAi(normalizeAiFallback(settings.aiFallback)),
     configuredCount,
   }
 }

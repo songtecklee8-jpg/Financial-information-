@@ -76,8 +76,8 @@ export default function App() {
   useEffect(() => () => aiAbortRef.current?.abort(), [])
 
   const runAiDiagnosis = useCallback(() => {
-    if (!api.hasGemini || aiRunning) {
-      if (!api.hasGemini) setSettingsOpen(true)
+    if (!api.hasAnyAi || aiRunning) {
+      if (!api.hasAnyAi) setSettingsOpen(true)
       return
     }
     aiAbortRef.current?.abort()
@@ -97,19 +97,19 @@ export default function App() {
       .finally(() => {
         if (!controller.signal.aborted) setAiRunning(false)
       })
-  }, [api.hasGemini, api.settings, aiInput, aiRunning])
+  }, [api.hasAnyAi, api.settings, aiInput, aiRunning])
 
-  // 配置 Gemini Key 后自动运行一次深度诊断
+  // 配置 Gemini 或免费备用 AI Key 后自动运行一次深度诊断
   const autoRunRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!api.hasGemini) return
-    const token = `${symbol}:${api.settings.aiRouting}:${api.settings.geminiModel}`
+    if (!api.hasAnyAi) return
+    const token = `${symbol}:${api.settings.aiRouting}:${api.settings.geminiModel}:${api.backupAiCount}`
     if (autoRunRef.current === token) return
     autoRunRef.current = token
     runAiDiagnosis()
     // runAiDiagnosis 依赖 aiInput，切换标的后由下方 effect 触发
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api.hasGemini, symbol, api.settings.aiRouting, api.settings.geminiModel])
+  }, [api.hasAnyAi, api.backupAiCount, symbol, api.settings.aiRouting, api.settings.geminiModel])
 
   const openSettings = useCallback(() => setSettingsOpen(true), [])
 
@@ -126,7 +126,7 @@ export default function App() {
           view={view}
           onNavigate={setView}
           configuredCount={api.configuredCount}
-          hasGemini={api.hasGemini}
+          hasGemini={api.hasAnyAi}
         />
         <TickerTape onSelect={setSymbol} />
 
@@ -186,7 +186,7 @@ export default function App() {
                   aiVerdict={aiVerdict}
                   aiRunning={aiRunning}
                   aiError={aiError}
-                  hasGemini={api.hasGemini}
+                  hasGemini={api.hasAnyAi}
                   onRunAi={runAiDiagnosis}
                   onOpenSettings={openSettings}
                 />
@@ -198,7 +198,7 @@ export default function App() {
                   onRefresh={refreshMacro}
                   settings={api.settings}
                   news={news.articles}
-                  hasGemini={api.hasGemini}
+                  hasGemini={api.hasAnyAi}
                   onOpenSettings={openSettings}
                   onOpenBonds={() => setView('bonds')}
                 />
@@ -222,7 +222,7 @@ export default function App() {
         security={snapshot.security}
         valuation={valuation}
         aiInput={aiInput}
-        hasGemini={api.hasGemini}
+        hasGemini={api.hasAnyAi}
         apiKey={api.settings.geminiKey}
         route={aiRoute(api.settings, 'flash')}
         onOpenSettings={openSettings}

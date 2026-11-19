@@ -1,10 +1,24 @@
 /**
- * APEX Terminal — 服务端 Gemini 调用层。
+ * APEX Terminal — 服务端 AI 统一路由与兜底引擎。
  *
- * 后台任务（新闻预翻译 / 摘要 / 五大资产推演）统一走本模块：
- * 默认使用 gemini-2.5-flash-lite 以最大化节省免费配额，遇到 429 / 不可用时
- * 自动向更稳的模型无缝降级，绝不中断后台同步。
+ * 1. 保持 Gemini 为绝对主力（Pro → Flash → Flash-Lite → gemini-flash-latest 原有降级链不变）。
+ * 2. 仅当 Gemini 触发 429 限流 / 配额耗尽 / 超时报错 / 未配置 Key，或在多任务高并发排队时，
+ *    自动由已配置的永久免费备用服务商（Groq / OpenRouter / Mistral / Cloudflare / NVIDIA）接力顶上，
+ *    并在单家连续失败时做临时冷却熔断。
  */
+
+import {
+  type ServerAiBackupKeys,
+  callBackupProvidersServer,
+  enterGeminiSlot,
+  hasConfiguredBackup,
+  inferTierFromModel,
+  isProviderCoolingDown,
+  leaveGeminiSlot,
+  recordProviderFailure,
+  recordProviderSuccess,
+  shouldOffloadGemini,
+} from './aiProviders.js'
 
 const API_ROOT = 'https://generativelanguage.googleapis.com/v1beta/models'
 
@@ -32,6 +46,10 @@ export interface GenerateServerOptions {
   temperature?: number
   maxOutputTokens?: number
   responseSchema?: unknown
+  /** 可选永久免费备用服务商凭证与开关 */
+  backupKeys?: ServerAiBackupKeys
+  /** 批量/并发场景下当 Gemini 并发已满时允许把后续子任务分流到健康备用引擎 */
+  allowConcurrencyOffload?: boolean
 }
 
 export interface ServerGeneration {
@@ -112,23 +130,82 @@ async function callModel(
   }
 }
 
-/**
- * 依次尝试模型链；遇到 API Key 无效立即抛出，其余（429 / 5xx / 网络）继续向下降级。
- */
-export async function generateServer(options: GenerateServerOptions): Promise<ServerGeneration> {
-  if (!options.apiKey) throw new Error('未配置 GEMINI_API_KEY')
+async function callGeminiChain(options: GenerateServerOptions): Promise<ServerGeneration> {
   const chain = options.chain ?? deriveChain(options.model ?? SERVER_LITE_MODEL)
   let lastError: unknown = null
-  for (const model of chain) {
-    try {
-      return await callModel(options, model)
-    } catch (error) {
-      lastError = error
-      const status = (error as { status?: number }).status
-      if (status === 400 || status === 401 || status === 403) throw error
+  enterGeminiSlot()
+  try {
+    for (const model of chain) {
+      try {
+        const res = await callModel(options, model)
+        recordProviderSuccess('gemini')
+        return res
+      } catch (error) {
+        lastError = error
+        const status = (error as { status?: number }).status
+        const message = error instanceof Error ? error.message : String(error)
+        recordProviderFailure('gemini', status, message)
+        if (status === 400 || status === 401 || status === 403) break
+      }
     }
+  } finally {
+    leaveGeminiSlot()
   }
   throw lastError instanceof Error ? lastError : new Error('Gemini 全部模型均不可用')
+}
+
+/**
+ * 统一 AI 调用入口：
+ * 1) 默认优先走 Gemini 完整降级链；
+ * 2) Gemini 限流 / 报错 / 冷却 / 未配置 / 高并发排队时，自动转入永久免费备用服务商；
+ * 3) 全部不可用时抛出错误由调用方平稳降级到本地引擎。
+ */
+export async function generateServer(options: GenerateServerOptions): Promise<ServerGeneration> {
+  const hasGemini = Boolean(options.apiKey?.trim())
+  const backupsReady = hasConfiguredBackup(options.backupKeys)
+  const tier = inferTierFromModel(options.model)
+  const offloadForConcurrency = Boolean(
+    options.allowConcurrencyOffload && shouldOffloadGemini(options.backupKeys),
+  )
+
+  if (!hasGemini && !backupsReady) {
+    throw new Error('未配置 GEMINI_API_KEY 或任何备用 AI Key')
+  }
+
+  const shouldTryGeminiFirst =
+    hasGemini && (!backupsReady || (!isProviderCoolingDown('gemini') && !offloadForConcurrency))
+
+  if (shouldTryGeminiFirst) {
+    try {
+      return await callGeminiChain(options)
+    } catch (geminiError) {
+      if (!backupsReady) throw geminiError
+    }
+  }
+
+  if (backupsReady) {
+    try {
+      const backupRes = await callBackupProvidersServer({
+        system: options.system,
+        prompt: options.prompt,
+        tier,
+        temperature: options.temperature,
+        maxOutputTokens: options.maxOutputTokens,
+        expectJson: Boolean(options.responseSchema),
+        keys: options.backupKeys,
+        rotate: offloadForConcurrency || isProviderCoolingDown('gemini'),
+      })
+      return { text: backupRes.text, model: backupRes.model }
+    } catch (backupError) {
+      // 若最初因并发/临时冷却跳过 Gemini 但所有备用均失败，再做一次 Gemini 兜底尝试
+      if (hasGemini && !shouldTryGeminiFirst) {
+        return await callGeminiChain(options)
+      }
+      throw backupError
+    }
+  }
+
+  return await callGeminiChain(options)
 }
 
 export function resolveServerModel(

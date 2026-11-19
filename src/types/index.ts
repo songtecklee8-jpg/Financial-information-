@@ -181,12 +181,27 @@ export interface ChatMessage {
  */
 export type AiRoutingMode = 'auto' | 'pro' | 'flash' | 'lite'
 
+export type AiFallbackProviderId = 'groq' | 'openrouter' | 'mistral' | 'cloudflare' | 'nvidia'
+
+export interface AiFallbackConfig {
+  /** 仅在 Gemini 限额 / 不可用 / 未配置 / 多任务并发排队时启用免费备用服务商 */
+  enabled: boolean
+  groqKey: string
+  openrouterKey: string
+  mistralKey: string
+  cloudflareAccountId: string
+  cloudflareApiToken: string
+  nvidiaKey: string
+}
+
 export interface ApiSettings {
   geminiKey: string
   /** 高级：自定义模型覆盖（留空则由三级路由自动决定） */
   geminiModel: string
   /** AI 模型路由模式 */
   aiRouting: AiRoutingMode
+  /** 永久免费多服务商兜底与并发分流配置 */
+  aiFallback?: AiFallbackConfig
   /** 各行情引擎的密钥配置（Key + Secret） */
   providers: Record<ProviderId, ProviderConfig>
 }

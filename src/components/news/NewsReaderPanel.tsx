@@ -15,6 +15,7 @@ import type { ApiSettings, NewsArticle, NewsDetail, NewsImpact, ReaderMode } fro
 import { Modal } from '@/components/ui/Modal'
 import { Badge } from '@/components/ui/Badge'
 import { AssetRow } from '@/components/news/NewsImpactPanel'
+import { hasAnyAiConfigured } from '@/lib/aiFallback'
 import { cn } from '@/lib/cn'
 import { formatRelativeTime } from '@/lib/format'
 import { fetchNewsDetail } from '@/lib/cloud'
@@ -108,7 +109,7 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
   const [mode, setMode] = useState<ReaderMode>('zh')
   const abortRef = useRef<AbortController | null>(null)
 
-  const hasGemini = settings.geminiKey.trim().length > 0
+  const hasAi = hasAnyAiConfigured(settings)
 
   const load = useCallback(
     async (refresh: boolean, tier: 'flash' | 'pro' = 'flash') => {
@@ -135,6 +136,7 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
         aiRouting: tier === 'pro' && settings.aiRouting === 'auto' ? 'pro' : settings.aiRouting,
         geminiModel: settings.geminiModel,
         geminiKey: settings.geminiKey,
+        aiFallback: settings.aiFallback,
       })
       if (controller.signal.aborted) return
 
@@ -183,7 +185,7 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
 
       // 3) 浏览器端 AI 生成摘要 + 完整华文翻译 + 五大资产推演
       try {
-        if (hasGemini) {
+        if (hasAi) {
           const clientDetail = await runNewsDetailClient(
             article,
             extractedText,
@@ -209,7 +211,7 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
         if (!controller.signal.aborted) setLoading(false)
       }
     },
-    [article, hasGemini, settings],
+    [article, hasAi, settings],
   )
 
   useEffect(() => {
@@ -255,7 +257,7 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
           <span className="flex flex-wrap items-center gap-2">
             <Badge tone={extractionMeta.tone}>{extractionMeta.label}</Badge>
             {degraded ? (
-              <Badge tone="neutral" title="未配置 Gemini Key，当前为本地启发式推演">
+              <Badge tone="neutral" title="未配置 AI Key 或均不可用，当前为本地启发式推演">
                 本地启发式
               </Badge>
             ) : (
@@ -269,8 +271,8 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
             <button
               type="button"
               onClick={() => void load(true, 'pro')}
-              disabled={loading || !hasGemini}
-              title={hasGemini ? '使用 Gemini 2.5 Pro 手动执行深度跨市场周期推演' : '请先配置 Gemini Key'}
+              disabled={loading || !hasAi}
+              title={hasAi ? '使用旗舰 Pro / 备用推理引擎执行深度跨市场周期推演' : '请先配置 Gemini 或免费备用 AI Key'}
               className="inline-flex items-center gap-1 rounded-lg border border-iris/40 bg-iris/10 px-2.5 py-1.5 text-iris transition hover:bg-iris/20 disabled:cursor-not-allowed disabled:opacity-45"
             >
               <Sparkles className="size-3" />
@@ -515,9 +517,9 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
             </section>
 
             <p className="border-t border-line/60 pt-2 text-[10px] leading-relaxed text-faint">
-              {hasGemini
+              {hasAi
                 ? '以上内容由 AI 抓取、翻译与概率化推演，仅供研究参考，不构成任何投资建议；概率之和恒为 100%。'
-                : '当前未配置 Gemini Key，仅提供降级推演。配置后台 GEMINI_API_KEY 可启用完整全文翻译与深度推演。'}
+                : '当前未配置 Gemini 或免费备用 AI Key，仅提供降级推演。配置 Key 后可启用完整全文翻译与深度推演。'}
             </p>
           </>
         )}

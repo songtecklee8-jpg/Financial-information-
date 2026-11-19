@@ -25,11 +25,23 @@ import {
   type AiContextInput,
 } from '@/lib/aiContext'
 import { ASSET_KEYS, assetLabel, localNewsImpact } from '@/lib/newsImpact'
+import {
+  callBackupProvidersClient,
+  enterGeminiClientSlot,
+  formatBackupModelDisplay,
+  hasConfiguredBackupAi,
+  isClientProviderCoolingDown,
+  leaveGeminiClientSlot,
+  recordClientProviderFailure,
+  recordClientProviderSuccess,
+  shouldOffloadClientGemini,
+  type ClientAiTier,
+} from '@/lib/aiFallback'
 import { RESEARCH_DOCTRINE } from '@/lib/researchDoctrine'
 import { buildTradeReviewPayload, localTradeReview } from '@/lib/trading'
 import { clamp } from '@/lib/format'
 
-/** Gemini 传输层 */
+/** Gemini 传输层 + 永久免费多服务商兜底调度 */
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
 const API_ROOT = 'https://generativelanguage.googleapis.com/v1beta/models'
@@ -111,16 +123,33 @@ export function modelChain(route: AiRoute): string[] {
 
 /** 把模型 id 转为友好展示名，用于分析卡片角标 */
 export function modelDisplayName(model: string): string {
-  const value = (model ?? '').toLowerCase().trim()
+  const raw = (model ?? '').trim()
+  const value = raw.toLowerCase()
   if (!value || value === 'local' || value === 'local-quant-engine' || value === 'unavailable') {
     return '本地量化引擎'
+  }
+  if (raw.includes(' + ')) {
+    return raw
+      .split(' + ')
+      .map((part) => modelDisplayName(part))
+      .slice(0, 2)
+      .join(' + ')
+  }
+  if (
+    value.startsWith('groq/') ||
+    value.startsWith('openrouter/') ||
+    value.startsWith('mistral/') ||
+    value.startsWith('cloudflare/') ||
+    value.startsWith('nvidia/')
+  ) {
+    return formatBackupModelDisplay(raw)
   }
   if (value.includes('2.5-pro')) return 'Gemini 2.5 Pro'
   if (value.includes('2.5-flash-lite')) return 'Gemini 2.5 Flash-Lite'
   if (value.includes('2.5-flash')) return 'Gemini 2.5 Flash'
   if (value.includes('flash-latest')) return 'Gemini Flash Latest'
   if (value.includes('2.0-flash')) return 'Gemini 2.0 Flash'
-  return model
+  return raw
 }
 
 
@@ -165,6 +194,8 @@ interface GenerateOptions {
   temperature?: number
   maxOutputTokens?: number
   signal?: AbortSignal
+  /** 批量并发任务时，若 Gemini 并发槽满可分流至免费备用服务商 */
+  allowConcurrencyOffload?: boolean
 }
 
 const VERDICT_SCHEMA: Record<string, unknown> = {
@@ -258,37 +289,104 @@ function isFatalKeyError(error: unknown): boolean {
   )
 }
 
+function toBackupMessages(
+  contents: GeminiContent[],
+): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> {
+  return contents.map((item) => ({
+    role: item.role === 'model' ? 'assistant' : 'user',
+    content: item.parts.map((part) => part.text ?? '').join(''),
+  }))
+}
+
 /**
- * 按候选链顺序尝试模型：高层级限流（429）/ 不可用（404）/ 网络异常时，
- * 自动无缝降级到下一级模型，绝不向用户抛出中断。
+ * 按候选链顺序尝试 Gemini 模型：高层级限流（429）/ 不可用（404）/ 网络异常时，
+ * 自动无缝降级到下一级模型。
  */
-async function callWithFallback(
+async function callGeminiWithFallback(
   options: GenerateOptions,
   chain: string[],
+  allowKeyFallback: boolean,
 ): Promise<{ text: string; model: string }> {
   let lastError: unknown
-  for (const model of chain) {
-    try {
-      return { text: await callModel(options, model), model }
-    } catch (error) {
-      lastError = error
-      // 用户主动中止 / API Key 无效：立即抛出，不再降级
-      if (options.signal?.aborted || isFatalKeyError(error)) throw error
-      // 其余情况（429 / 404 / 5xx / 网络）继续向下级模型降级
+  enterGeminiClientSlot()
+  try {
+    for (const model of chain) {
+      try {
+        const text = await callModel(options, model)
+        recordClientProviderSuccess('gemini')
+        return { text, model }
+      } catch (error) {
+        lastError = error
+        if (options.signal?.aborted) throw error
+        const status = error instanceof GeminiError ? error.code : undefined
+        const msg = error instanceof Error ? error.message : String(error)
+        recordClientProviderFailure('gemini', status, msg)
+        // 仅当没有备用引擎时对无效 Key 立即终止；有备用引擎时留待备用接管
+        if (!allowKeyFallback && isFatalKeyError(error)) throw error
+      }
     }
+  } finally {
+    leaveGeminiClientSlot()
   }
   throw lastError instanceof Error ? lastError : new GeminiError('Gemini 请求失败')
 }
 
 /**
- * 调用 Gemini，自动按三级路由与降级链执行。
+ * 调用 AI（Gemini 优先并保留完整三级降级链；仅在 Gemini 限额/报错/未配置 Key/高并发时自动切换免费备用服务商）。
  * 返回实际命中的模型 id，供分析卡片显示「Powered by …」角标。
  */
 export async function generateText(options: GenerateOptions): Promise<{ text: string; model: string }> {
-  if (!options.apiKey?.trim()) {
-    throw new GeminiError('未配置 Gemini API Key', undefined, '请点击右上角「API 设置」填入 Key')
+  const hasGemini = Boolean(options.apiKey?.trim())
+  const backupsReady = hasConfiguredBackupAi()
+  const tier: ClientAiTier = resolveStartTier(options.route)
+
+  if (!hasGemini && !backupsReady) {
+    throw new GeminiError(
+      '未配置 Gemini 或免费备用 AI Key',
+      undefined,
+      '请点击右上角「API 设置」填入 Gemini Key 或任一免费备用服务商 Key',
+    )
   }
-  return callWithFallback(options, modelChain(options.route))
+
+  const runBackup = (rotate: boolean) =>
+    callBackupProvidersClient({
+      system: options.systemInstruction ?? '',
+      messages: toBackupMessages(options.contents),
+      tier,
+      temperature: options.temperature,
+      maxOutputTokens: options.maxOutputTokens,
+      expectJson: Boolean(options.jsonSchema),
+      signal: options.signal,
+      rotate,
+    })
+
+  const chain = modelChain(options.route)
+  const offloadForConcurrency = Boolean(
+    options.allowConcurrencyOffload && shouldOffloadClientGemini(),
+  )
+
+  // 1) 主路径：有 Gemini Key 且（无备用，或 Gemini 未冷却且未触发并发分流）→ 严格优先走 Gemini
+  if (hasGemini && (!backupsReady || (!isClientProviderCoolingDown('gemini') && !offloadForConcurrency))) {
+    try {
+      return await callGeminiWithFallback(options, chain, backupsReady)
+    } catch (error) {
+      if (options.signal?.aborted || !backupsReady) throw error
+      return await runBackup(true)
+    }
+  }
+
+  // 2) 未配置 Gemini、Gemini 处于冷却、或并发已满分流：使用永久免费备用服务商
+  if (backupsReady) {
+    try {
+      return await runBackup(offloadForConcurrency)
+    } catch (backupErr) {
+      if (options.signal?.aborted || !hasGemini) throw backupErr
+      // 若并发分流到备用后意外失败，仍可再尝试一次 Gemini
+      return await callGeminiWithFallback(options, chain, false)
+    }
+  }
+
+  return await callGeminiWithFallback(options, chain, false)
 }
 
 function parseJsonBlock<T>(text: string): T {
@@ -377,7 +475,7 @@ export async function runChat(
 
 /** 无 Key 时的本地兜底回复 */
 export function localChatFallback(): string {
-  return '当前未配置 Gemini API Key，AI 研究助理处于本地模式。请在右上角「API 设置」中填入 Gemini Key，即可针对该标的的财务指标、估值假设与宏观利率进行深度问答，并支持重新调整评分权重。'
+  return '当前未配置 Gemini 或免费备用 AI Key，研究助理处于本地模式。请在右上角「API 设置」中填入 Gemini Key（或 Groq / OpenRouter / Mistral 等免费备用 Key），即可针对该标的的财务指标、估值假设与宏观利率进行深度问答。'
 }
 
 // ---------------------------------------------------------------------------
@@ -448,13 +546,15 @@ export async function translateArticles(
   signal?: AbortSignal,
 ): Promise<{ articles: NewsArticle[]; model: string | null }> {
   const pending = articles.filter((article) => article.lang === 'en' && article.translation !== 'done')
-  if (!apiKey?.trim() || pending.length === 0) return { articles, model: null }
+  if ((!apiKey?.trim() && !hasConfiguredBackupAi()) || pending.length === 0) {
+    return { articles, model: null }
+  }
 
   const translated = new Map<
     string,
     { titleZh: string; summaryZh: string; sentiment: NewsArticle['sentiment'] }
   >()
-  let usedModel: string | null = null
+  const usedModels = new Set<string>()
   const chunks: NewsArticle[][] = []
   for (let i = 0; i < pending.length; i += TRANSLATE_BATCH) {
     chunks.push(pending.slice(i, i + TRANSLATE_BATCH))
@@ -486,8 +586,9 @@ export async function translateArticles(
             temperature: 0.2,
             maxOutputTokens: 4096,
             signal,
+            allowConcurrencyOffload: chunks.length > 1,
           })
-          usedModel = model
+          if (model) usedModels.add(model)
           const parsed = parseJsonBlock<{ items?: TranslateRow[] }>(text)
           for (const row of parsed.items ?? []) {
             if (!row.id) continue
@@ -508,6 +609,7 @@ export async function translateArticles(
     }),
   )
 
+  const usedModel = usedModels.size > 0 ? [...usedModels].slice(0, 2).join(' + ') : null
   if (translated.size === 0) return { articles, model: usedModel }
   return {
     articles: articles.map((article) => {
@@ -676,7 +778,7 @@ export async function runNewsImpact(
   route: AiRoute,
   signal?: AbortSignal,
 ): Promise<NewsImpact> {
-  if (!apiKey?.trim()) return localNewsImpact(article)
+  if (!apiKey?.trim() && !hasConfiguredBackupAi()) return localNewsImpact(article)
   try {
     const { text, model: usedModel } = await generateText({
       apiKey,
@@ -738,7 +840,7 @@ export async function runTradeReview(
   route: AiRoute,
   signal?: AbortSignal,
 ): Promise<TradeReview> {
-  if (!apiKey?.trim()) return localTradeReview(profile, stats)
+  if (!apiKey?.trim() && !hasConfiguredBackupAi()) return localTradeReview(profile, stats)
   try {
     const { text, model: usedModel } = await generateText({
       apiKey,
@@ -824,7 +926,7 @@ export async function runNewsDetailClient(
 ): Promise<NewsDetail> {
   const fallback = localNewsImpact(article)
   const body = (fullText || article.summary || article.title).slice(0, 10_000)
-  if (!apiKey?.trim()) {
+  if (!apiKey?.trim() && !hasConfiguredBackupAi()) {
     return {
       id: article.id,
       url: article.url,
@@ -873,6 +975,7 @@ export async function runNewsDetailClient(
           temperature: 0.2,
           maxOutputTokens: 6144,
           signal,
+          allowConcurrencyOffload: true,
         }).catch(() => null)
       : Promise.resolve(null)
 
@@ -980,7 +1083,7 @@ export async function runMacroCycleAnalysis(
   signal?: AbortSignal,
 ): Promise<MacroCycleAnalysis> {
   const fallback = localMacroCycleAnalysis(macro)
-  if (!apiKey?.trim()) return fallback
+  if (!apiKey?.trim() && !hasConfiguredBackupAi()) return fallback
 
   const topHeadlines = news
     .slice(0, 8)

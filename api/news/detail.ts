@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 import { buildNewsDetail } from '../_lib/ai.js'
+import { mergeBackupKeys } from '../_lib/aiProviders.js'
 import { loadKeys } from '../_lib/env.js'
 import { extractArticle } from '../_lib/extract.js'
 import { SERVER_FLASH_MODEL, SERVER_LITE_MODEL, SERVER_PRO_MODEL } from '../_lib/geminiServer.js'
@@ -126,6 +127,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const keys = loadKeys()
 
   const geminiKey = pick('geminiKey') || keys.gemini
+  const backupKeys = mergeBackupKeys(keys, body.aiFallback)
 
   // 1) 抓取正文并清洗（失败则回落到 RSS 导语）
   const extracted = isSafeUrl(url) ? await extractArticle(url) : { text: '', mode: 'unavailable' as const }
@@ -134,7 +136,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   // 2) AI 摘要要点 + 五大资产推演 + 全文翻译
   let detail: NewsDetail
   try {
-    detail = await buildNewsDetail({ article, fullText, apiKey: geminiKey, model: requestedModel })
+    detail = await buildNewsDetail({
+      article,
+      fullText,
+      apiKey: geminiKey,
+      model: requestedModel,
+      backupKeys,
+    })
   } catch (error) {
     res.status(200).json({
       ok: false,

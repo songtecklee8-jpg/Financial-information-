@@ -10,6 +10,7 @@ import { TradeReviewPanel } from '@/components/paper/TradeReviewPanel'
 import { StatTile } from '@/components/ui/StatTile'
 import { usePaperTrading } from '@/hooks/usePaperTrading'
 import { useQuoteMap } from '@/hooks/useQuoteMap'
+import { hasAnyAiConfigured } from '@/lib/aiFallback'
 import { aiRoute } from '@/lib/gemini'
 import { cn } from '@/lib/cn'
 import { formatNumber, formatPercent, formatPrice } from '@/lib/format'
@@ -243,7 +244,7 @@ export function PaperTradingPage({ settings, onOpenSettings }: PaperTradingPageP
               <TradeReviewPanel
                 profile={active}
                 stats={stats}
-                hasGemini={settings.geminiKey.trim().length > 0}
+                hasGemini={hasAnyAiConfigured(settings)}
                 apiKey={settings.geminiKey}
                 route={aiRoute(settings, 'pro')}
                 onOpenSettings={onOpenSettings}

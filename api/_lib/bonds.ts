@@ -8,6 +8,7 @@
  * 4. 遵循「Pro → Flash → Flash-Lite → Flash-Latest」自动降级保护
  */
 
+import { type ServerAiBackupKeys, hasConfiguredBackup } from './aiProviders.js'
 import {
   SERVER_FLASH_MODEL,
   generateServer,
@@ -292,6 +293,7 @@ export async function fetchBondsTracker(options: {
   geminiKey?: string
   aiRouting?: string
   geminiModel?: string
+  backupKeys?: ServerAiBackupKeys
 }): Promise<BondsPayload> {
   const [benchmarks, headlines] = await Promise.all([
     fetchBondBenchmarks(),
@@ -301,18 +303,19 @@ export async function fetchBondsTracker(options: {
   const auctions = baselineAuctions(benchmarks)
   let usedModel: string | undefined
 
-  // 若探测到实时资讯且配置了 Gemini Key，可用多模型校验并标注模型版本
-  if (headlines.length > 0 && options.geminiKey) {
+  // 若探测到实时资讯且配置了 Gemini 或免费备用 Key，可用多模型校验并标注模型版本
+  if (headlines.length > 0 && (options.geminiKey || hasConfiguredBackup(options.backupKeys))) {
     try {
       const targetModel = resolveServerModel('lite', options.aiRouting, options.geminiModel)
       const res = await generateServer({
-        apiKey: options.geminiKey,
+        apiKey: options.geminiKey ?? '',
         model: targetModel,
         system:
           '你是马来西亚固收市场数据助理。阅读以下新闻标题，如发现与 MGS / MGII 新发或重开拍卖有关的具体期限/认购倍数，返回 JSON `{ "notes": string[] }`；无明确拍卖数字则返回空数组。',
         prompt: JSON.stringify(headlines.slice(0, 6)),
         temperature: 0.1,
         maxOutputTokens: 512,
+        backupKeys: options.backupKeys,
       })
       usedModel = res.model
     } catch {
@@ -352,7 +355,12 @@ const BOND_ANALYSIS_SCHEMA = {
 export async function analyzeBondAuctions(
   benchmarks: BondMarketBenchmark,
   auctions: BondAuctionItem[],
-  options: { geminiKey?: string; aiRouting?: string; geminiModel?: string },
+  options: {
+    geminiKey?: string
+    aiRouting?: string
+    geminiModel?: string
+    backupKeys?: ServerAiBackupKeys
+  },
 ): Promise<BondAuctionAnalysis> {
   const now = new Date().toISOString()
   const upcoming = auctions.filter((a) => a.status !== 'completed')
@@ -373,12 +381,12 @@ export async function analyzeBondAuctions(
     generatedAt: now,
   }
 
-  if (!options.geminiKey) return fallback
+  if (!options.geminiKey && !hasConfiguredBackup(options.backupKeys)) return fallback
 
   const targetModel = resolveServerModel('pro', options.aiRouting, options.geminiModel)
   try {
     const res = await generateServer({
-      apiKey: options.geminiKey,
+      apiKey: options.geminiKey ?? '',
       model: targetModel || SERVER_FLASH_MODEL,
       system: `${SERVER_RESEARCH_DOCTRINE}
 
@@ -387,6 +395,7 @@ export async function analyzeBondAuctions(
       temperature: 0.35,
       maxOutputTokens: 2048,
       responseSchema: BOND_ANALYSIS_SCHEMA,
+      backupKeys: options.backupKeys,
     })
     const parsed = parseJsonLoose<Partial<BondAuctionAnalysis>>(res.text) ?? {}
     return {

@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
+import { mergeBackupKeys } from './_lib/aiProviders.js'
 import { fetchEarningsCalendar } from './_lib/earnings.js'
 import { loadKeys } from './_lib/env.js'
 import { STORE_KEYS, TTL, readJson, writeJson } from './_lib/store.js'
@@ -21,6 +22,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const finnhubKey = str(body.finnhubKey) || keys.finnhub
   const fmpKey = str(body.fmpKey) || keys.fmp
   const geminiKey = str(body.geminiKey) || keys.gemini
+  const backupKeys = mergeBackupKeys(keys, body.aiFallback)
   const aiRouting = str(body.aiRouting) || 'auto'
   const geminiModel = str(body.geminiModel)
   const refresh = str(req.query.refresh) === '1' || body.refresh === true
@@ -40,6 +42,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     geminiKey,
     aiRouting,
     geminiModel,
+    backupKeys,
   })
 
   if (!str(body.finnhubKey) && !str(body.fmpKey)) {

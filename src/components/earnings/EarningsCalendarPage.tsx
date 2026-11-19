@@ -27,6 +27,7 @@ import {
   buildBursaEarningsDetailBrowser,
   fetchEarningsCalendarBrowser,
 } from '@/lib/earningsBondsClient'
+import { hasAnyAiConfigured } from '@/lib/aiFallback'
 import { cn } from '@/lib/cn'
 import { formatCompact, formatDateTime, formatRelativeTime } from '@/lib/format'
 import { modelDisplayName } from '@/lib/gemini'
@@ -86,7 +87,7 @@ export function EarningsCalendarPage({
   const hasMarketKey =
     settings.providers.finnhub.apiKey.trim().length > 0 ||
     settings.providers.fmp.apiKey.trim().length > 0
-  const hasGemini = settings.geminiKey.trim().length > 0
+  const hasAi = hasAnyAiConfigured(settings)
 
   const loadCalendar = useCallback(
     async (refresh = false) => {
@@ -339,7 +340,7 @@ export function EarningsCalendarPage({
           subtitle="点击「查看财报与 PDF 摘要」触发 Gemini 多模型深度财报解读"
           className="xl:col-span-6"
           actions={
-            !hasGemini && (
+            !hasAi && (
               <button
                 type="button"
                 onClick={onOpenSettings}

@@ -6,6 +6,7 @@
  * - 遵循「Pro → Flash → Flash-Lite → Flash-Latest」自动降级保护
  */
 
+import { type ServerAiBackupKeys, hasConfiguredBackup } from './aiProviders.js'
 import { extractArticle } from './extract.js'
 import {
   SERVER_FLASH_MODEL,
@@ -498,6 +499,7 @@ export async function fetchEarningsCalendar(options: {
   geminiKey?: string
   aiRouting?: string
   geminiModel?: string
+  backupKeys?: ServerAiBackupKeys
 }): Promise<EarningsPayload> {
   const from = isoDateOffset(0)
   const to = isoDateOffset(7)
@@ -568,11 +570,11 @@ export async function fetchEarningsCalendar(options: {
       origin: 'live',
     }))
 
-    if (options.geminiKey) {
+    if (options.geminiKey || hasConfiguredBackup(options.backupKeys)) {
       try {
         const targetModel = resolveServerModel('flash', options.aiRouting, options.geminiModel)
         const res = await generateServer({
-          apiKey: options.geminiKey,
+          apiKey: options.geminiKey ?? '',
           model: targetModel,
           system:
             '你是马来西亚 Bursa Malaysia 财报解析专家。根据以下公告标题提取或合理归纳结构化字段（找不到数字则填 "见原公告"），全部用简体中文，只输出 JSON。',
@@ -580,6 +582,7 @@ export async function fetchEarningsCalendar(options: {
           temperature: 0.2,
           maxOutputTokens: 2048,
           responseSchema: BURSA_PARSE_SCHEMA,
+          backupKeys: options.backupKeys,
         })
         usedModel = res.model
         const parsed = parseJsonLoose<{
@@ -654,7 +657,12 @@ const BURSA_DETAIL_SCHEMA = {
 
 export async function buildBursaEarningsDetail(
   item: BursaAnnouncement,
-  options: { geminiKey?: string; aiRouting?: string; geminiModel?: string },
+  options: {
+    geminiKey?: string
+    aiRouting?: string
+    geminiModel?: string
+    backupKeys?: ServerAiBackupKeys
+  },
 ): Promise<BursaEarningsDetail> {
   const now = new Date().toISOString()
 
@@ -686,12 +694,12 @@ export async function buildBursaEarningsDetail(
     generatedAt: now,
   }
 
-  if (!options.geminiKey) return fallback
+  if (!options.geminiKey && !hasConfiguredBackup(options.backupKeys)) return fallback
 
   const targetModel = resolveServerModel('pro', options.aiRouting, options.geminiModel)
   try {
     const res = await generateServer({
-      apiKey: options.geminiKey,
+      apiKey: options.geminiKey ?? '',
       model: targetModel || SERVER_FLASH_MODEL,
       system: `${SERVER_RESEARCH_DOCTRINE}
 
@@ -708,6 +716,7 @@ export async function buildBursaEarningsDetail(
       temperature: 0.3,
       maxOutputTokens: 2560,
       responseSchema: BURSA_DETAIL_SCHEMA,
+      backupKeys: options.backupKeys,
     })
 
     const parsed =

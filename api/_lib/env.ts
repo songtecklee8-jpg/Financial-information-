@@ -7,6 +7,12 @@
 
 export interface ServerKeys {
   gemini: string
+  groq: string
+  openrouter: string
+  mistral: string
+  cloudflareAccountId: string
+  cloudflareApiToken: string
+  nvidia: string
   finnhub: string
   alpacaKey: string
   alpacaSecret: string
@@ -32,6 +38,12 @@ function read(...names: string[]): string {
 export function loadKeys(): ServerKeys {
   return {
     gemini: read('GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY'),
+    groq: read('GROQ_API_KEY'),
+    openrouter: read('OPENROUTER_API_KEY'),
+    mistral: read('MISTRAL_API_KEY'),
+    cloudflareAccountId: read('CLOUDFLARE_ACCOUNT_ID', 'CF_ACCOUNT_ID'),
+    cloudflareApiToken: read('CLOUDFLARE_API_TOKEN', 'CF_API_TOKEN'),
+    nvidia: read('NVIDIA_API_KEY', 'NVIDIA_NIM_API_KEY'),
     finnhub: read('FINNHUB_API_KEY'),
     alpacaKey: read('ALPACA_API_KEY', 'ALPACA_API_KEY_ID', 'APCA_API_KEY_ID'),
     alpacaSecret: read(

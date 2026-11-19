@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 import { enrichArticles } from '../_lib/ai.js'
+import { extractEnvBackupKeys } from '../_lib/aiProviders.js'
 import { fetchBondsTracker } from '../_lib/bonds.js'
 import { fetchEarningsCalendar } from '../_lib/earnings.js'
 import { loadKeys, loadWatchlist } from '../_lib/env.js'
@@ -90,6 +91,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     liveCount: Object.keys(quotes).length,
   }
 
+  const backupKeys = extractEnvBackupKeys(keys)
+
   // ------------------------------------------------------------------ 新闻
   let newsTotal = 0
   let newsTranslated = 0
@@ -104,7 +107,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     addedCount = fresh.length
 
     const pending = fresh.filter((item) => item.lang === 'en').slice(0, MAX_ENRICH_PER_RUN)
-    const enriched = await enrichArticles(pending, keys.gemini)
+    const enriched = await enrichArticles(pending, keys.gemini, backupKeys)
     newsModel = enriched.model ?? existing?.model
 
     // 合并并按 URL + 标题相似度智能去重，保留最新 200 条
@@ -135,6 +138,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       fmpKey: keys.fmp,
       geminiKey: keys.gemini,
       aiRouting: 'auto',
+      backupKeys,
     })
     await writeJson(STORE_KEYS.earnings, earningsPayload, TTL.earnings)
   } catch (error) {
@@ -145,6 +149,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     const bondsPayload = await fetchBondsTracker({
       geminiKey: keys.gemini,
       aiRouting: 'auto',
+      backupKeys,
     })
     await writeJson(STORE_KEYS.bonds, bondsPayload, TTL.bonds)
   } catch (error) {

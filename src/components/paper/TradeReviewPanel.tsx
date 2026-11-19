@@ -82,7 +82,7 @@ export function TradeReviewPanel({
               className="inline-flex items-center gap-1 rounded-lg border border-gold/45 bg-gold/10 px-2.5 py-1.5 font-mono text-[10.5px] text-gold transition hover:bg-gold/20"
               title="配置 Gemini Key 可获得结合宏观利率与历史周期的深度诊断"
             >
-              <KeyRound className="size-3" /> 配置 Gemini
+              <KeyRound className="size-3" /> 配置 AI Key
             </button>
           )}
           <button
@@ -109,13 +109,13 @@ export function TradeReviewPanel({
             <span className="text-gold">「做得好的地方」</span>与
             <span className="text-gold">「需要改善的地方」</span>
             两大板块，并给出可落地的仓位调整与风控方案。
-            {!hasGemini && ' 未配置 Gemini Key 时将使用本地量化启发式引擎生成复盘。'}
+            {!hasGemini && ' 未配置 AI Key 时将使用本地量化启发式引擎生成复盘。'}
           </p>
         )}
 
         {running && (
           <div className="flex items-center gap-2 py-6 font-mono text-[11.5px] text-gold">
-            <LoaderCircle className="size-4 animate-spin" /> Gemini 正在结合金融理论与历史周期复盘该账户…
+            <LoaderCircle className="size-4 animate-spin" /> AI 正在结合金融理论与历史周期复盘该账户…
           </div>
         )}
 

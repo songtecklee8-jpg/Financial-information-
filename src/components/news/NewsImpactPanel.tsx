@@ -15,6 +15,7 @@ import {
 import type { ApiSettings, AssetImpact, AssetKey, ImpactDirection, NewsArticle, NewsImpact } from '@/types'
 import { Modal } from '@/components/ui/Modal'
 import { Badge } from '@/components/ui/Badge'
+import { hasAnyAiConfigured } from '@/lib/aiFallback'
 import { cn } from '@/lib/cn'
 import { formatRelativeTime } from '@/lib/format'
 import { aiRoute, modelDisplayName, runNewsImpact } from '@/lib/gemini'
@@ -96,7 +97,7 @@ export function NewsImpactPanel({ article, settings, onClose }: NewsImpactPanelP
   const [loading, setLoading] = useState(true)
   const abortRef = useRef<AbortController | null>(null)
 
-  const hasGemini = settings.geminiKey.trim().length > 0
+  const hasAi = hasAnyAiConfigured(settings)
 
   const run = useMemo(
     () =>
@@ -146,12 +147,12 @@ export function NewsImpactPanel({ article, settings, onClose }: NewsImpactPanelP
         <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-[10.5px] text-faint">
           <span className="flex flex-wrap items-center gap-2">
             {impact?.degraded ? (
-              <Badge tone="neutral" title="未配置 Gemini Key，当前为本地启发式推演">
+              <Badge tone="neutral" title="未配置 AI Key 或均不可用，当前为本地启发式推演">
                 本地启发式
               </Badge>
             ) : (
               <Badge tone="gold" dot>
-                {hasGemini ? 'GEMINI 推演' : '本地推演'}
+                {hasAi ? 'AI 推演' : '本地推演'}
               </Badge>
             )}
             {impact && (
@@ -165,7 +166,7 @@ export function NewsImpactPanel({ article, settings, onClose }: NewsImpactPanelP
             <button
               type="button"
               onClick={() => run('pro')}
-              disabled={loading || !hasGemini}
+              disabled={loading || !hasAi}
               className="inline-flex items-center gap-1 rounded-lg border border-iris/40 bg-iris/10 px-2.5 py-1.5 text-iris transition hover:bg-iris/20 disabled:opacity-45"
             >
               <Sparkles className="size-3" />
