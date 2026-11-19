@@ -25,8 +25,8 @@ export const AI_BACKUP_PROVIDERS: AiBackupProviderMeta[] = [
     accent: 'text-gold',
     keyLabel: 'Groq API Key',
     keyPlaceholder: 'gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-    role: '高频短文本 / 翻译与极速降级',
-    note: 'OpenAI 兼容接口（Llama 3.1 8B / Llama 3.3 70B），响应极快，适合高频新闻批量翻译与摘要兜底。',
+    role: '极速新闻翻译/摘要与高频短文本降级',
+    note: 'OpenAI 兼容接口（Llama 3.1 8B / Llama 3.3 70B），响应极快，专用于高频新闻批量翻译、摘要与极速降级。',
     docsUrl: 'https://console.groq.com/keys',
   },
   {
@@ -36,8 +36,8 @@ export const AI_BACKUP_PROVIDERS: AiBackupProviderMeta[] = [
     accent: 'text-ice',
     keyLabel: 'OpenRouter API Key',
     keyPlaceholder: 'sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-    role: '免费 :free 模型池 / 财报与国债研判',
-    note: '自动聚合 :free 免费模型池（Llama 3.3 70B Free / Gemma 3 27B Free 等），适合财报与固收分析降级。',
+    role: '自动调度 :free 免费模型池（财报与国债分析降级）',
+    note: '自动聚合 OpenRouter :free 免费模型池（Llama 3.3 70B Free / Gemma 3 等），专用于财报日程、季度公告与固收国债分析降级。',
     docsUrl: 'https://openrouter.ai/keys',
   },
   {
@@ -47,8 +47,8 @@ export const AI_BACKUP_PROVIDERS: AiBackupProviderMeta[] = [
     accent: 'text-iris',
     keyLabel: 'Mistral API Key',
     keyPlaceholder: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-    role: '结构化 JSON 摘要与多语言分析',
-    note: '支持 JSON 模式（mistral-small-latest / open-mistral-nemo），适合结构化输出与摘要降级。',
+    role: '结构化 JSON 摘要与深度研报降级',
+    note: '支持结构化 JSON 模式（mistral-small-latest / open-mistral-nemo），专用于复杂裁决与结构化摘要降级。',
     docsUrl: 'https://console.mistral.ai/api-keys',
   },
   {
@@ -61,7 +61,7 @@ export const AI_BACKUP_PROVIDERS: AiBackupProviderMeta[] = [
     secondaryLabel: 'Cloudflare Account ID',
     secondaryPlaceholder: '32 位 Account ID',
     role: '轻量边缘推理与并发分流',
-    note: '需同时填写 Account ID 与 API Token；高并发批处理时自动分流，静态托管遇跨域限制可由后端代理转发。',
+    note: '需同时填写 Account ID 与 API Token；高并发批处理/多任务执行时自动分流，静态托管遇跨域限制可由后端代理转发。',
     docsUrl: 'https://dash.cloudflare.com/?to=/:account/ai/workers-ai',
   },
   {

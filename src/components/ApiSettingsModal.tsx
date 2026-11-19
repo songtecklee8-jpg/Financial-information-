@@ -701,21 +701,46 @@ export function ApiSettingsModal({
 
           <p className="mt-2 text-[11px] leading-relaxed text-dim">
             所有 AI 任务<span className="text-ink">默认优先走上方 Gemini 链路</span>；仅当 Gemini 遇到 429 限流、
-            配额耗尽、超时报错、未配置 Gemini Key，或批量翻译/研判并发排队时，自动分流切换至以下已填入 Key 的免费备用接口。
-            未填写的服务商会自动跳过；若全部在线引擎不可用，则平滑回退至本地量化与启发式引擎。
+            配额耗尽、超时报错、未配置 Gemini Key，或批量翻译/研判并发排队时，自动按顺序调用已填入 Key 的服务商。
+            未填写的服务商会自动跳过绝不报错；若全部在线引擎均不可用，则平滑回退至本地量化与启发式引擎。
           </p>
 
-          <div className="mt-3 grid grid-cols-1 gap-2.5 lg:grid-cols-2">
-            {AI_BACKUP_PROVIDERS.map((meta) => (
-              <BackupProviderCard
-                key={meta.id}
-                meta={meta}
-                config={fallbackConfig}
-                status={backupStatus[meta.id]}
-                onPatch={patchFallback}
-                onTest={() => void runBackupTest(meta.id)}
-              />
-            ))}
+          <div className="mt-3 space-y-3">
+            <div>
+              <div className="mb-2 font-mono text-[10px] tracking-[0.14em] text-ice uppercase">
+                前 4 大永久免费主力替补（Groq / OpenRouter / Mistral / Cloudflare）
+              </div>
+              <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
+                {AI_BACKUP_PROVIDERS.filter((m) => m.id !== 'nvidia').map((meta) => (
+                  <BackupProviderCard
+                    key={meta.id}
+                    meta={meta}
+                    config={fallbackConfig}
+                    status={backupStatus[meta.id]}
+                    onPatch={patchFallback}
+                    onTest={() => void runBackupTest(meta.id)}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-2 font-mono text-[10px] tracking-[0.14em] text-faint uppercase">
+                其它深度备用引擎（可选）
+              </div>
+              <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
+                {AI_BACKUP_PROVIDERS.filter((m) => m.id === 'nvidia').map((meta) => (
+                  <BackupProviderCard
+                    key={meta.id}
+                    meta={meta}
+                    config={fallbackConfig}
+                    status={backupStatus[meta.id]}
+                    onPatch={patchFallback}
+                    onTest={() => void runBackupTest(meta.id)}
+                  />
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
