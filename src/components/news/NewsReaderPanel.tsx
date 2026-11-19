@@ -18,7 +18,8 @@ import { AssetRow } from '@/components/news/NewsImpactPanel'
 import { cn } from '@/lib/cn'
 import { formatRelativeTime } from '@/lib/format'
 import { fetchNewsDetail } from '@/lib/cloud'
-import { aiRoute, modelDisplayName, runNewsImpact } from '@/lib/gemini'
+import { aiRoute, modelDisplayName, runNewsDetailClient } from '@/lib/gemini'
+import { localNewsImpact } from '@/lib/newsImpact'
 
 interface NewsReaderPanelProps {
   article: NewsArticle
@@ -65,11 +66,13 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
   const hasGemini = settings.geminiKey.trim().length > 0
 
   const load = useCallback(
-    async (refresh: boolean) => {
+    async (refresh: boolean, tier: 'flash' | 'pro' = 'flash') => {
       abortRef.current?.abort()
       const controller = new AbortController()
       abortRef.current = controller
       setLoading(true)
+
+      const route = aiRoute(settings, tier)
 
       // 1) 云端后台优先：全文抓取 + AI 摘要 + 推演一次到位（Redis 缓存秒开）
       const remote = await fetchNewsDetail({
@@ -84,38 +87,52 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
         lang: article.lang,
         tickers: article.tickers,
         refresh,
+        aiRouting: tier === 'pro' && settings.aiRouting === 'auto' ? 'pro' : settings.aiRouting,
+        geminiModel: settings.geminiModel,
       })
       if (controller.signal.aborted) return
 
-      if (remote) {
+      const remoteHasAi = Boolean(remote && remote.model !== 'local' && !remote.impact?.degraded)
+      if (remote && remoteHasAi) {
         setDetail(remote)
         setImpact(remote.impact)
         setLoading(false)
         return
       }
 
-      // 2) 云端不可用：回落浏览器端 AI 推演，正文以导语兜底
+      // 2) 云端未配置 Gemini Key 或不可用：保留抓到的原文 fullText，回落浏览器端 AI（使用用户在 [API 设置] 填入的 Key）
+      const extractedText = remote?.fullText ?? ''
+      const extractionMode = remote?.extraction ?? 'unavailable'
       try {
-        const localImpact = await runNewsImpact(
-          article,
-          settings.geminiKey,
-          aiRoute(settings, 'flash'),
-          controller.signal,
-        )
-        if (controller.signal.aborted) return
-        setImpact(localImpact)
+        if (hasGemini) {
+          const clientDetail = await runNewsDetailClient(
+            article,
+            extractedText,
+            extractionMode,
+            settings.geminiKey,
+            route,
+            controller.signal,
+          )
+          if (controller.signal.aborted) return
+          setDetail(clientDetail)
+          setImpact(clientDetail.impact)
+        } else {
+          if (remote) setDetail(remote)
+          setImpact(localNewsImpact(article))
+        }
       } catch {
         if (controller.signal.aborted) return
-        setImpact(null)
+        if (remote) setDetail(remote)
+        setImpact(localNewsImpact(article))
       } finally {
         if (!controller.signal.aborted) setLoading(false)
       }
     },
-    [article, settings.geminiKey, settings.aiRouting, settings.geminiModel, settings],
+    [article, hasGemini, settings],
   )
 
   useEffect(() => {
-    void load(false)
+    void load(false, 'flash')
     return () => abortRef.current?.abort()
   }, [load])
 
@@ -132,8 +149,8 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
   const extraction = detail?.extraction ?? 'unavailable'
   const extractionMeta = EXTRACTION_META[extraction]
 
-  const model = detail?.model ?? impact?.model
-  const degraded = !detail && (!impact || impact.degraded)
+  const model = impact?.model ?? detail?.model
+  const degraded = !impact || Boolean(impact.degraded) || model === 'local'
 
   const zhParagraphs = useMemo(() => paragraphs(fullTextZh), [fullTextZh])
   const enParagraphs = useMemo(() => paragraphs(fullText), [fullText])
@@ -157,23 +174,30 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
           <span className="flex flex-wrap items-center gap-2">
             <Badge tone={extractionMeta.tone}>{extractionMeta.label}</Badge>
             {degraded ? (
-              <Badge tone="neutral" title="云端详情不可用，当前为浏览器端降级推演">
-                本地降级
+              <Badge tone="neutral" title="未配置 Gemini Key，当前为本地启发式推演">
+                本地启发式
               </Badge>
             ) : (
-              <Badge tone="gold" dot>
-                云端 AI
+              <Badge tone="gold" dot title={`实际执行模型：${model}`}>
+                Powered by {modelDisplayName(model ?? 'gemini-2.5-flash')}
               </Badge>
-            )}
-            {model && !degraded && (
-              <span title={`实际执行模型：${model}`}>Powered by {modelDisplayName(model)}</span>
             )}
             {impact && <span>置信度 {impact.confidence}%</span>}
           </span>
           <span className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => void load(true)}
+              onClick={() => void load(true, 'pro')}
+              disabled={loading || !hasGemini}
+              title={hasGemini ? '使用 Gemini 2.5 Pro 手动执行深度跨市场周期推演' : '请先配置 Gemini Key'}
+              className="inline-flex items-center gap-1 rounded-lg border border-iris/40 bg-iris/10 px-2.5 py-1.5 text-iris transition hover:bg-iris/20 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              <Sparkles className="size-3" />
+              Pro 深度推演
+            </button>
+            <button
+              type="button"
+              onClick={() => void load(true, 'flash')}
               disabled={loading}
               className="inline-flex items-center gap-1 rounded-lg border border-line-2 px-2.5 py-1.5 text-dim transition hover:border-gold/50 hover:text-gold disabled:opacity-50"
             >
@@ -256,11 +280,16 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
             {/* ============ 顶部区域：五大资产概率仪表盘 ============ */}
             {impact ? (
               <section>
-                <div className="mb-2 flex items-center gap-2">
-                  <ChartColumn className="size-3.5 text-gold/80" />
-                  <h3 className="font-mono text-[11px] font-medium tracking-[0.14em] text-dim uppercase">
-                    五大核心资产 · 上涨 vs 下跌概率
-                  </h3>
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <ChartColumn className="size-3.5 text-gold/80" />
+                    <h3 className="font-mono text-[11px] font-medium tracking-[0.14em] text-dim uppercase">
+                      五大核心资产 · 上涨 vs 下跌概率
+                    </h3>
+                  </div>
+                  <Badge tone={degraded ? 'neutral' : 'gold'} dot={!degraded}>
+                    {degraded ? '本地启发式' : `Powered by ${modelDisplayName(model ?? 'gemini-2.5-flash')}`}
+                  </Badge>
                 </div>
                 <div className="space-y-2">
                   {impact.assets.map((asset) => (

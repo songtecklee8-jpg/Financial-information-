@@ -1,6 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 import { enrichArticles } from '../_lib/ai.js'
+import { fetchBondsTracker } from '../_lib/bonds.js'
+import { fetchEarningsCalendar } from '../_lib/earnings.js'
 import { loadKeys, loadWatchlist } from '../_lib/env.js'
 import { fetchAllNews } from '../_lib/news.js'
 import { fetchQuotes } from '../_lib/quotes.js'
@@ -100,6 +102,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     await writeJson(STORE_KEYS.news, newsPayload, TTL.news)
   } catch (error) {
     errors.push(`新闻同步失败：${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  // ------------------------------------------------------------------ 财报日历与国债
+  try {
+    const earningsPayload = await fetchEarningsCalendar({
+      finnhubKey: keys.finnhub,
+      fmpKey: keys.fmp,
+      geminiKey: keys.gemini,
+      aiRouting: 'auto',
+    })
+    await writeJson(STORE_KEYS.earnings, earningsPayload, TTL.earnings)
+  } catch (error) {
+    errors.push(`财报日历同步失败：${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  try {
+    const bondsPayload = await fetchBondsTracker({
+      geminiKey: keys.gemini,
+      aiRouting: 'auto',
+    })
+    await writeJson(STORE_KEYS.bonds, bondsPayload, TTL.bonds)
+  } catch (error) {
+    errors.push(`国债日历同步失败：${error instanceof Error ? error.message : String(error)}`)
   }
 
   // ------------------------------------------------------------------ 落库

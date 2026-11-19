@@ -602,3 +602,155 @@ export interface TradeReview {
   model: string
   degraded?: boolean
 }
+
+/** 深度跨市场宏观周期推演（Pro 层级手动触发） */
+export interface MacroCycleAnalysis {
+  cyclePhase: string
+  headline: string
+  transmission: string
+  historicalAnalogy: string
+  allocations: Array<{
+    asset: string
+    bias: ImpactDirection
+    rationale: string
+  }>
+  riskNote: string
+  generatedAt: string
+  model: string
+  degraded?: boolean
+}
+
+// ---------------------------------------------------------------------------
+// 财报日历（美股 7 天 + 马股 .KL 季度财报公告）
+// ---------------------------------------------------------------------------
+
+export interface UsEarningsEvent {
+  id: string
+  symbol: string
+  company: string
+  date: string
+  hour: 'bmo' | 'amc' | 'dmh' | 'unknown'
+  quarter?: number
+  year?: number
+  epsEstimate: number | null
+  epsActual: number | null
+  revenueEstimate: number | null
+  revenueActual: number | null
+  provider: 'finnhub' | 'fmp' | 'baseline'
+  origin: 'live' | 'baseline'
+}
+
+export interface BursaAnnouncement {
+  id: string
+  symbol: string
+  company: string
+  title: string
+  quarterLabel: string
+  publishedAt: string
+  periodEnd: string
+  revenueMyr: string
+  revenueYoY: string
+  netProfitMyr: string
+  netProfitYoY: string
+  epsSen: string
+  dividendSen?: string
+  pdfUrl: string
+  sourceUrl: string
+  summaryPoints: string[]
+  origin: 'live' | 'baseline'
+}
+
+export interface BursaEarningsDetail {
+  id: string
+  symbol: string
+  company: string
+  quarterLabel: string
+  publishedAt: string
+  revenueMyr: string
+  revenueYoY: string
+  netProfitMyr: string
+  netProfitYoY: string
+  epsSen: string
+  dividendSen?: string
+  summaryPoints: string[]
+  highlights: string
+  outlook: string
+  risks: string
+  pdfUrl: string
+  model: string
+  degraded?: boolean
+  generatedAt: string
+}
+
+export interface EarningsPayload {
+  us: UsEarningsEvent[]
+  bursa: BursaAnnouncement[]
+  usOrigin: 'live' | 'baseline'
+  bursaOrigin: 'live' | 'baseline'
+  usProvider: string
+  bursaProvider: string
+  updatedAt: string
+  model?: string
+}
+
+// ---------------------------------------------------------------------------
+// 马来西亚政府债券（MGS / MGII Tracker）
+// ---------------------------------------------------------------------------
+
+export type BondInstrument = 'MGS' | 'MGII'
+
+export interface BondAuctionItem {
+  id: string
+  instrument: BondInstrument
+  series: string
+  issueCode: string
+  tenorYears: number
+  reopening: boolean
+  auctionDate: string
+  issueDate: string
+  maturityDate: string
+  estimatedSizeMyrB: number
+  privatePlacementMyrB?: number
+  couponRate?: number
+  yieldAvg?: number
+  bidToCover?: number
+  status: 'upcoming' | 'announced' | 'completed'
+  source: string
+  origin: 'live' | 'baseline'
+}
+
+export interface BondMarketBenchmark {
+  opr: number
+  oprDate: string
+  interbankOvernight: number
+  mgs3y: number
+  mgs5y: number
+  mgs10y: number
+  mgs15y: number
+  mgs30y: number
+  us10y: number
+  spread10y: number
+  usdMyr: number
+  bnmOrigin: 'live' | 'baseline'
+}
+
+export interface BondAuctionAnalysis {
+  headline: string
+  demandOutlook: string
+  yieldImpact: string
+  fxAndEquityImpact: string
+  keyWatchPoints: string[]
+  model: string
+  degraded?: boolean
+  generatedAt: string
+}
+
+export interface BondsPayload {
+  benchmarks: BondMarketBenchmark
+  auctions: BondAuctionItem[]
+  origin: 'live' | 'baseline'
+  sourceLabel: string
+  updatedAt: string
+  model?: string
+}
+

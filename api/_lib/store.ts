@@ -137,11 +137,17 @@ export const STORE_KEYS = {
   news: 'apex:news',
   syncMeta: 'apex:sync-meta',
   newsDetail: (id: string) => `apex:news:detail:${id}`,
+  earnings: 'apex:earnings',
+  earningsDetail: (id: string) => `apex:earnings:detail:${id}`,
+  bonds: 'apex:bonds',
 } as const
 
-/** 行情快照缓存 30 分钟；新闻缓存 2 小时；单篇新闻详情缓存 7 天 */
+/** 行情快照缓存 30 分钟；新闻/财报/国债缓存 2 小时；单篇详情缓存 7 天 */
 export const TTL = {
   quotes: 60 * 30,
   news: 60 * 120,
+  earnings: 60 * 120,
+  bonds: 60 * 120,
   detail: 60 * 60 * 24 * 7,
 } as const
+

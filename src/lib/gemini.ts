@@ -6,8 +6,14 @@ import type {
   AssetKey,
   ChatMessage,
   ImpactDirection,
+  MacroCycleAnalysis,
+  MacroRates,
   NewsArticle,
+  NewsDetail,
   NewsImpact,
+  PaperProfile,
+  ProfileStats,
+  TradeReview,
   Verdict,
 } from '@/types'
 import {
@@ -22,7 +28,6 @@ import { ASSET_KEYS, assetLabel, localNewsImpact } from '@/lib/newsImpact'
 import { RESEARCH_DOCTRINE } from '@/lib/researchDoctrine'
 import { buildTradeReviewPayload, localTradeReview } from '@/lib/trading'
 import { clamp } from '@/lib/format'
-import type { PaperProfile, ProfileStats, TradeReview } from '@/types'
 
 /** Gemini 传输层 */
 
@@ -106,12 +111,16 @@ export function modelChain(route: AiRoute): string[] {
 
 /** 把模型 id 转为友好展示名，用于分析卡片角标 */
 export function modelDisplayName(model: string): string {
-  const value = (model ?? '').toLowerCase()
+  const value = (model ?? '').toLowerCase().trim()
+  if (!value || value === 'local' || value === 'local-quant-engine' || value === 'unavailable') {
+    return '本地量化引擎'
+  }
   if (value.includes('2.5-pro')) return 'Gemini 2.5 Pro'
   if (value.includes('2.5-flash-lite')) return 'Gemini 2.5 Flash-Lite'
   if (value.includes('2.5-flash')) return 'Gemini 2.5 Flash'
+  if (value.includes('flash-latest')) return 'Gemini Flash Latest'
   if (value.includes('2.0-flash')) return 'Gemini 2.0 Flash'
-  return 'Gemini Flash'
+  return model
 }
 
 
@@ -446,45 +455,58 @@ export async function translateArticles(
     { titleZh: string; summaryZh: string; sentiment: NewsArticle['sentiment'] }
   >()
   let usedModel: string | null = null
+  const chunks: NewsArticle[][] = []
   for (let i = 0; i < pending.length; i += TRANSLATE_BATCH) {
-    const chunk = pending.slice(i, i + TRANSLATE_BATCH)
-    const payload = JSON.stringify(
-      chunk.map((article) => ({
-        id: article.id,
-        title: article.title,
-        summary: article.summary.slice(0, 280),
-      })),
-    )
-    try {
-      const { text, model } = await generateText({
-        apiKey,
-        route,
-        systemInstruction: TRANSLATE_INSTRUCTION,
-        contents: [{ role: 'user', parts: [{ text: payload }] }],
-        jsonSchema: TRANSLATE_SCHEMA,
-        temperature: 0.2,
-        maxOutputTokens: 4096,
-        signal,
-      })
-      usedModel = model
-      const parsed = parseJsonBlock<{ items?: TranslateRow[] }>(text)
-      for (const row of parsed.items ?? []) {
-        if (!row.id) continue
-        const titleZh = (row.titleZh ?? '').trim()
-        const summaryZh = (row.summaryZh ?? '').trim()
-        if (titleZh) {
-          translated.set(row.id, {
-            titleZh,
-            summaryZh: summaryZh || titleZh,
-            sentiment: normalizeSentiment(row.sentiment),
+    chunks.push(pending.slice(i, i + TRANSLATE_BATCH))
+  }
+
+  let cursor = 0
+  const concurrency = Math.min(3, chunks.length)
+  await Promise.all(
+    Array.from({ length: concurrency }, async () => {
+      while (cursor < chunks.length) {
+        if (signal?.aborted) return
+        const chunk = chunks[cursor]
+        cursor += 1
+        if (!chunk) continue
+        const payload = JSON.stringify(
+          chunk.map((article) => ({
+            id: article.id,
+            title: article.title,
+            summary: article.summary.slice(0, 280),
+          })),
+        )
+        try {
+          const { text, model } = await generateText({
+            apiKey,
+            route,
+            systemInstruction: TRANSLATE_INSTRUCTION,
+            contents: [{ role: 'user', parts: [{ text: payload }] }],
+            jsonSchema: TRANSLATE_SCHEMA,
+            temperature: 0.2,
+            maxOutputTokens: 4096,
+            signal,
           })
+          usedModel = model
+          const parsed = parseJsonBlock<{ items?: TranslateRow[] }>(text)
+          for (const row of parsed.items ?? []) {
+            if (!row.id) continue
+            const titleZh = (row.titleZh ?? '').trim()
+            const summaryZh = (row.summaryZh ?? '').trim()
+            if (titleZh) {
+              translated.set(row.id, {
+                titleZh,
+                summaryZh: summaryZh || titleZh,
+                sentiment: normalizeSentiment(row.sentiment),
+              })
+            }
+          }
+        } catch (error) {
+          if (signal?.aborted) throw error
         }
       }
-    } catch (error) {
-      // 用户主动中止：向上抛；单批翻译失败：跳过该批，保留原文
-      if (signal?.aborted) throw error
-    }
-  }
+    }),
+  )
 
   if (translated.size === 0) return { articles, model: usedModel }
   return {
@@ -751,4 +773,268 @@ export async function runTradeReview(
   }
 }
 
+// ---------------------------------------------------------------------------
+// 单篇新闻详情（浏览器端增强：摘要要点 + 全文翻译 + 五大资产推演）
+// ---------------------------------------------------------------------------
+
+const CLIENT_DETAIL_INSTRUCTION = `${RESEARCH_DOCTRINE}
+
+你是资深全球宏观与跨市场策略师，负责把给定财经新闻提炼为结构化华文投研摘要，并输出五大资产（equities / bonds / realEstate / gold / volatility）的上涨与下跌概率。
+要求：
+1. summaryPoints：3-5 条凝练的简体中文核心要点，每条不超过 45 字，保留关键数字与实体；
+2. titleZh：流畅准确的简体中文标题；
+3. 五大资产顺序固定，每类资产 up + down = 100；
+4. 只输出 JSON。`
+
+const CLIENT_DETAIL_SCHEMA: Record<string, unknown> = {
+  type: 'OBJECT',
+  properties: {
+    titleZh: { type: 'STRING' },
+    summaryPoints: { type: 'ARRAY', items: { type: 'STRING' } },
+    eventBreakdown: { type: 'STRING' },
+    transmission: { type: 'STRING' },
+    liquidity: { type: 'STRING' },
+    rateExpectation: { type: 'STRING' },
+    sectorImpact: { type: 'STRING' },
+    assets: IMPACT_SCHEMA.properties ? (IMPACT_SCHEMA.properties as Record<string, unknown>).assets : { type: 'ARRAY' },
+    watchlist: { type: 'ARRAY', items: { type: 'STRING' } },
+    confidence: { type: 'INTEGER' },
+  },
+  required: [
+    'titleZh',
+    'summaryPoints',
+    'eventBreakdown',
+    'transmission',
+    'liquidity',
+    'rateExpectation',
+    'sectorImpact',
+    'assets',
+    'watchlist',
+    'confidence',
+  ],
+}
+
+export async function runNewsDetailClient(
+  article: NewsArticle,
+  fullText: string,
+  extraction: NewsDetail['extraction'],
+  apiKey: string,
+  route: AiRoute,
+  signal?: AbortSignal,
+): Promise<NewsDetail> {
+  const fallback = localNewsImpact(article)
+  const body = (fullText || article.summary || article.title).slice(0, 10_000)
+  if (!apiKey?.trim()) {
+    return {
+      id: article.id,
+      url: article.url,
+      title: article.title,
+      titleZh: article.titleZh,
+      sourceName: article.sourceName,
+      publishedAt: article.publishedAt,
+      summaryPoints: [],
+      fullText,
+      fullTextZh: article.lang === 'zh' ? fullText : '',
+      impact: fallback,
+      model: 'local',
+      extraction,
+      cachedAt: new Date().toISOString(),
+    }
+  }
+
+  const detailReq = generateText({
+    apiKey,
+    route,
+    systemInstruction: CLIENT_DETAIL_INSTRUCTION,
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            text: `${buildImpactPayload(article)}\n\n正文：\n${body}`,
+          },
+        ],
+      },
+    ],
+    jsonSchema: CLIENT_DETAIL_SCHEMA,
+    temperature: 0.3,
+    maxOutputTokens: 3072,
+    signal,
+  })
+
+  const translateReq =
+    article.lang === 'en' && fullText.trim().length > 0
+      ? generateText({
+          apiKey,
+          route: { ...route, tier: 'lite' },
+          systemInstruction:
+            '你是资深财经翻译，请把以下英文财经新闻全文完整翻译成流畅、专业的简体中文。保留数字、公司名与专有名词，按自然段输出译文，不要省略或总结。',
+          contents: [{ role: 'user', parts: [{ text: fullText.slice(0, 12_000) }] }],
+          temperature: 0.2,
+          maxOutputTokens: 6144,
+          signal,
+        }).catch(() => null)
+      : Promise.resolve(null)
+
+  const [detailRes, translatedRes] = await Promise.all([detailReq, translateReq])
+  const parsed = parseJsonBlock<
+    Partial<NewsImpact> & {
+      titleZh?: string
+      summaryPoints?: string[]
+      assets?: Array<Partial<AssetImpact>>
+    }
+  >(detailRes.text)
+
+  const impact = normalizeImpact(parsed, article, fallback, detailRes.model)
+  const titleZh = (parsed.titleZh ?? article.titleZh ?? '').trim() || undefined
+  const summaryPoints = Array.isArray(parsed.summaryPoints)
+    ? parsed.summaryPoints.map((p) => String(p).trim()).filter(Boolean).slice(0, 5)
+    : []
+
+  return {
+    id: article.id,
+    url: article.url,
+    title: article.title,
+    titleZh,
+    sourceName: article.sourceName,
+    publishedAt: article.publishedAt,
+    summaryPoints,
+    fullText,
+    fullTextZh: article.lang === 'zh' ? fullText : translatedRes?.text.trim() ?? '',
+    impact,
+    model: detailRes.model,
+    extraction,
+    cachedAt: new Date().toISOString(),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 宏观周期：Pro 级深度跨市场宏观周期推演
+// ---------------------------------------------------------------------------
+
+const MACRO_CYCLE_INSTRUCTION = `${RESEARCH_DOCTRINE}
+
+你是顶级的全球宏观与跨市场首席策略师，覆盖美股、马来西亚 Bursa 市场、主权债（美债与大马 MGS）、REITs、黄金与波动率衍生品。
+请根据给定的实时美债收益率曲线、马来西亚 MGS / BNM OPR 政策利率、美马 10Y 利差与最新财经标题，输出结构化的「深度跨市场宏观周期推演」。
+必须严格遵守：
+1. cyclePhase：明确判断当前所处的宏观周期阶段（不超过 18 字，例如「高利率平台期 · 温差收敛」）；
+2. headline：一句话核心定调（不超过 42 字）；
+3. transmission：深度解析美债收益率、BNM OPR 与美马利差如何向风险资产、马币汇率与估值折现率传导（140 字以内）；
+4. historicalAnalogy：显式映射至少一个历史周期情景（如 1997 亚洲金融风暴、2008 次贷危机、2020 流动性冲击、2022 激进加息）并指出异同（100 字以内）；
+5. allocations：固定输出 5 类资产判断（美股权益、马股 Bursa、美债与 MGS、黄金与商品、波动率与现金），bias 取 bullish / bearish / neutral，rationale 控制在 35 字以内；
+6. riskNote：最需要警惕的尾部风险与观察指标（60 字以内）；
+7. 所有数据必须严格来自输入，禁止编造；全部使用简体中文，只输出 JSON。`
+
+const MACRO_CYCLE_SCHEMA: Record<string, unknown> = {
+  type: 'OBJECT',
+  properties: {
+    cyclePhase: { type: 'STRING' },
+    headline: { type: 'STRING' },
+    transmission: { type: 'STRING' },
+    historicalAnalogy: { type: 'STRING' },
+    allocations: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          asset: { type: 'STRING' },
+          bias: { type: 'STRING', enum: ['bullish', 'bearish', 'neutral'] },
+          rationale: { type: 'STRING' },
+        },
+        required: ['asset', 'bias', 'rationale'],
+      },
+    },
+    riskNote: { type: 'STRING' },
+  },
+  required: ['cyclePhase', 'headline', 'transmission', 'historicalAnalogy', 'allocations', 'riskNote'],
+}
+
+export function localMacroCycleAnalysis(macro: MacroRates): MacroCycleAnalysis {
+  const inverted = macro.us10y < macro.us2y
+  const wideSpread = macro.spread10y > 0.5
+  return {
+    cyclePhase: inverted ? '曲线倒挂 · 晚周期防御' : '高利率平台期 · 利差博弈',
+    headline: `美债 10Y (${macro.us10y.toFixed(2)}%) 领先 MGS 10Y (${macro.mgs10y.toFixed(2)}%) ${macro.spread10y.toFixed(2)}%`,
+    transmission: `当前美国 2Y-10Y 利差为 ${((macro.us10y - macro.us2y) * 100).toFixed(0)} bp，BNM OPR 维持 ${macro.opr.toFixed(2)}%，美马 10Y 利差处于 ${macro.spread10y.toFixed(2)}% 区间。高贴现率仍压制高估值久期资产，同时${wideSpread ? '较宽的美马利差使令吉汇率与外资流向对美联储指引保持高敏感度。' : '收敛中的美马利差有助缓和令吉与马股的外部利率压力。'}`,
+    historicalAnalogy:
+      '参考 2022–2023 年紧缩平台期与 1997 亚洲汇率传导经验：利差走阔阶段宜重现金流与股息安全垫，待长端利率见顶后再加仓久期。',
+    allocations: [
+      { asset: '美股权益', bias: inverted ? 'neutral' : 'bullish', rationale: '高现金流龙头具备抗贴现率韧性，警惕高 PE 成长股估值波动' },
+      { asset: '马股 Bursa', bias: wideSpread ? 'neutral' : 'bullish', rationale: '关注高股息银行与公用事业板块对冲外资利率波动' },
+      { asset: '美债与 MGS', bias: 'bullish', rationale: '锁定 4%+ 票息收益，配置中长久期捕捉降息周期资本利得' },
+      { asset: '黄金与避险', bias: 'bullish', rationale: '地缘不确定性与实际利率见顶预期支撑中枢上移' },
+      { asset: '波动率与现金', bias: 'neutral', rationale: '保留适当美元/令吉流动性应对议息会议前后 IV 脉冲' },
+    ],
+    riskNote: '重点跟踪美债 10Y 突破前高与 BNM OPR 措辞变化对美元兑令吉（USD/MYR）的冲击。',
+    generatedAt: new Date().toISOString(),
+    model: 'local',
+    degraded: true,
+  }
+}
+
+export async function runMacroCycleAnalysis(
+  macro: MacroRates,
+  news: NewsArticle[],
+  apiKey: string,
+  route: AiRoute,
+  signal?: AbortSignal,
+): Promise<MacroCycleAnalysis> {
+  const fallback = localMacroCycleAnalysis(macro)
+  if (!apiKey?.trim()) return fallback
+
+  const topHeadlines = news
+    .slice(0, 8)
+    .map((item) => `- [${item.sourceName}] ${item.titleZh ?? item.title}`)
+    .join('\n')
+
+  const payload = [
+    '=== 实时利率矩阵 ===',
+    `US 2Y: ${macro.us2y.toFixed(2)}% | US 10Y: ${macro.us10y.toFixed(2)}% | US 30Y: ${macro.us30y.toFixed(2)}%`,
+    `US 2Y-10Y 利差: ${((macro.us10y - macro.us2y) * 100).toFixed(0)} bp`,
+    `MGS 3Y: ${macro.mgs3y.toFixed(2)}% | MGS 5Y: ${macro.mgs5y.toFixed(2)}% | MGS 10Y: ${macro.mgs10y.toFixed(2)}%`,
+    `BNM OPR: ${macro.opr.toFixed(2)}%`,
+    `US 10Y - MGS 10Y 利差: ${macro.spread10y.toFixed(2)}% (${(macro.spread10y * 100).toFixed(0)} bp)`,
+    '',
+    '=== 最新财经头条 ===',
+    topHeadlines || '暂无实时头条',
+  ].join('\n')
+
+  try {
+    const { text, model: usedModel } = await generateText({
+      apiKey,
+      route,
+      systemInstruction: MACRO_CYCLE_INSTRUCTION,
+      contents: [{ role: 'user', parts: [{ text: payload }] }],
+      jsonSchema: MACRO_CYCLE_SCHEMA,
+      temperature: 0.35,
+      maxOutputTokens: 2560,
+      signal,
+    })
+    const parsed = parseJsonBlock<Partial<MacroCycleAnalysis>>(text)
+    const allocations = Array.isArray(parsed.allocations) && parsed.allocations.length > 0
+      ? parsed.allocations.slice(0, 5).map((item) => ({
+          asset: String(item.asset ?? '').trim() || '资产',
+          bias: normalizeDirection(item.bias, 50),
+          rationale: String(item.rationale ?? '').trim(),
+        }))
+      : fallback.allocations
+
+    return {
+      cyclePhase: (parsed.cyclePhase ?? '').trim() || fallback.cyclePhase,
+      headline: (parsed.headline ?? '').trim() || fallback.headline,
+      transmission: (parsed.transmission ?? '').trim() || fallback.transmission,
+      historicalAnalogy: (parsed.historicalAnalogy ?? '').trim() || fallback.historicalAnalogy,
+      allocations,
+      riskNote: (parsed.riskNote ?? '').trim() || fallback.riskNote,
+      generatedAt: new Date().toISOString(),
+      model: usedModel,
+      degraded: false,
+    }
+  } catch (error) {
+    if (signal?.aborted) throw error
+    return fallback
+  }
+}
+
 export { localVerdict }
+

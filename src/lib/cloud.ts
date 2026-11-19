@@ -1,4 +1,16 @@
-import type { CloudSnapshotResponse, NewsArticle, NewsDetail } from '@/types'
+import type {
+  ApiSettings,
+  BondAuctionAnalysis,
+  BondAuctionItem,
+  BondMarketBenchmark,
+  BondsPayload,
+  BursaAnnouncement,
+  BursaEarningsDetail,
+  CloudSnapshotResponse,
+  EarningsPayload,
+  NewsArticle,
+  NewsDetail,
+} from '@/types'
 
 /**
  * APEX Terminal — 云端后台客户端。
@@ -121,6 +133,8 @@ export interface NewsDetailRequest {
   lang: 'en' | 'zh'
   tickers: string[]
   refresh?: boolean
+  aiRouting?: string
+  geminiModel?: string
 }
 
 /** 请求云端新闻详情接口；失败返回 null（由调用方回落本地推演） */
@@ -148,6 +162,8 @@ export async function fetchNewsDetail(req: NewsDetailRequest): Promise<NewsDetai
       lang: req.lang,
       tickers: req.tickers.join(','),
       refresh: req.refresh ? '1' : '',
+      aiRouting: req.aiRouting ?? '',
+      geminiModel: req.geminiModel ?? '',
     }),
   })
 
@@ -158,3 +174,108 @@ export async function fetchNewsDetail(req: NewsDetailRequest): Promise<NewsDetai
   detailCache.set(req.id, payload.detail)
   return payload.detail
 }
+
+// ---------------------------------------------------------------------------
+// 财报日历 & 马来西亚政府债券（MGS / MGII）
+// ---------------------------------------------------------------------------
+
+const AI_ENDPOINT_TIMEOUT_MS = 25_000
+
+async function postApiJson<T>(path: string, body: Record<string, unknown>, timeoutMs = AI_ENDPOINT_TIMEOUT_MS): Promise<T | null> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+    if (!response.ok) return null
+    const contentType = response.headers.get('content-type') ?? ''
+    if (!contentType.includes('application/json')) return null
+    return (await response.json()) as T
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export async function fetchEarningsCalendar(
+  settings: ApiSettings,
+  refresh = false,
+): Promise<EarningsPayload | null> {
+  const res = await postApiJson<{ ok: boolean; payload?: EarningsPayload }>(
+    '/earnings',
+    {
+      finnhubKey: settings.providers.finnhub.apiKey,
+      fmpKey: settings.providers.fmp.apiKey,
+      geminiKey: settings.geminiKey,
+      aiRouting: settings.aiRouting,
+      geminiModel: settings.geminiModel,
+      refresh,
+    },
+    18_000,
+  )
+  return res?.payload ?? null
+}
+
+export async function fetchBursaEarningsDetail(
+  announcement: BursaAnnouncement,
+  settings: ApiSettings,
+  refresh = false,
+): Promise<BursaEarningsDetail | null> {
+  const res = await postApiJson<{ ok: boolean; detail?: BursaEarningsDetail }>(
+    '/earnings/detail',
+    {
+      announcement,
+      geminiKey: settings.geminiKey,
+      aiRouting: settings.aiRouting,
+      geminiModel: settings.geminiModel,
+      refresh,
+    },
+    AI_ENDPOINT_TIMEOUT_MS,
+  )
+  return res?.detail ?? null
+}
+
+export async function fetchBondsTracker(
+  settings: ApiSettings,
+  refresh = false,
+): Promise<BondsPayload | null> {
+  const res = await postApiJson<{ ok: boolean; payload?: BondsPayload }>(
+    '/bonds',
+    {
+      geminiKey: settings.geminiKey,
+      aiRouting: settings.aiRouting,
+      geminiModel: settings.geminiModel,
+      refresh,
+    },
+    18_000,
+  )
+  return res?.payload ?? null
+}
+
+export async function analyzeBondAuctions(
+  benchmarks: BondMarketBenchmark,
+  auctions: BondAuctionItem[],
+  settings: ApiSettings,
+): Promise<BondAuctionAnalysis | null> {
+  const res = await postApiJson<{ ok: boolean; analysis?: BondAuctionAnalysis }>(
+    '/bonds/analyze',
+    {
+      benchmarks,
+      auctions,
+      geminiKey: settings.geminiKey,
+      aiRouting: settings.aiRouting,
+      geminiModel: settings.geminiModel,
+    },
+    AI_ENDPOINT_TIMEOUT_MS,
+  )
+  return res?.analysis ?? null
+}
+

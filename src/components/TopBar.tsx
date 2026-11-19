@@ -1,4 +1,13 @@
-import { Activity, Banknote, ChartCandlestick, KeyRound, Newspaper, Radio } from 'lucide-react'
+import {
+  Activity,
+  Banknote,
+  CalendarRange,
+  ChartCandlestick,
+  KeyRound,
+  Landmark,
+  Newspaper,
+  Radio,
+} from 'lucide-react'
 
 import { Badge } from '@/components/ui/Badge'
 import { SearchBar } from '@/components/SearchBar'
@@ -6,12 +15,14 @@ import { useClock } from '@/hooks/useClock'
 import { cn } from '@/lib/cn'
 import { formatClock } from '@/lib/format'
 
-/** 顶部导航的三个主页面（互不挤压的独立分区） */
-export type AppView = 'equity' | 'news' | 'paper'
+/** 顶部导航的主页面（互不挤压的独立分区） */
+export type AppView = 'equity' | 'news' | 'earnings' | 'bonds' | 'paper'
 
 const NAV_ITEMS: Array<{ key: AppView; label: string; hint: string; icon: typeof ChartCandlestick }> = [
   { key: 'equity', label: '股票', hint: '实时行情看板 · 多引擎数据源切换 · 全周期 K 线 · 个股量化诊断', icon: ChartCandlestick },
   { key: 'news', label: '财经新闻', hint: '全球与马股实时新闻中心 · 华文翻译 · 跨市场涨跌概率预测', icon: Newspaper },
+  { key: 'earnings', label: '财报日历', hint: '美股 7 日财报日程（Finnhub/FMP）· 马股 (.KL) 季度财报与 PDF 摘要', icon: CalendarRange },
+  { key: 'bonds', label: '国债看板', hint: '马来西亚政府发债日历（MGS / MGII）· BNM OPR 与 10Y 收益率基准', icon: Landmark },
   { key: 'paper', label: '模拟交易', hint: '实时盘面仿真交易 · 多策略账户（Profile）管理 · AI 交易复盘', icon: Banknote },
 ]
 

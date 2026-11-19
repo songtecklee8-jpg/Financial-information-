@@ -173,6 +173,8 @@ export interface BuildDetailInput {
   /** 抓取清洗后的全文（为空则回落到 RSS 导语） */
   fullText: string
   apiKey: string
+  /** 可选模型覆盖（用于支持 Pro / Flash / Lite 路由模式） */
+  model?: string
 }
 
 /** 生成单篇新闻的深度详情（摘要要点 + 推演 + 全文翻译） */
@@ -215,9 +217,11 @@ export async function buildNewsDetail(input: BuildDetailInput): Promise<NewsDeta
     }
   }
 
+  const targetModel = input.model || SERVER_FLASH_MODEL
+
   const detailResult = await generateServer({
     apiKey,
-    model: SERVER_FLASH_MODEL,
+    model: targetModel,
     system: `${SERVER_RESEARCH_DOCTRINE}\n\n${DETAIL_INSTRUCTION}`,
     prompt: `新闻来源：${article.sourceName}\n发布时间：${article.publishedAt}\n标题：${article.title}\n导语：${article.summary}\n\n全文：\n${body}`,
     temperature: 0.35,

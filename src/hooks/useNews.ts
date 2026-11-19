@@ -12,6 +12,8 @@ export interface NewsController {
   lastUpdated: string | null
   /** 云端后台最近一次同步元信息（云端不可用时为 null） */
   cloudMeta: CloudSyncMeta | null
+  /** 云端预翻译命中的模型 id */
+  cloudModel: string | null
   refresh: () => void
 }
 
@@ -29,6 +31,7 @@ export function useNews(settings: ApiSettings, symbol: string): NewsController {
   const [status, setStatus] = useState<NewsStatus>('loading')
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
   const [cloudMeta, setCloudMeta] = useState<CloudSyncMeta | null>(null)
+  const [cloudModel, setCloudModel] = useState<string | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
 
   useEffect(() => {
@@ -44,10 +47,12 @@ export function useNews(settings: ApiSettings, symbol: string): NewsController {
         setArticles(cloud.articles)
         setStatus('cloud')
         setLastUpdated(cloud.updatedAt)
+        setCloudModel(cloud.model ?? null)
         const snapshot = await getCloudSnapshot()
         if (alive) setCloudMeta(snapshot?.meta ?? null)
         return
       }
+      setCloudModel(null)
 
       // 2) 回落到浏览器端直连
       try {
@@ -83,5 +88,5 @@ export function useNews(settings: ApiSettings, symbol: string): NewsController {
 
   const refresh = useCallback(() => setRefreshToken((value) => value + 1), [])
 
-  return { articles, status, lastUpdated, cloudMeta, refresh }
+  return { articles, status, lastUpdated, cloudMeta, cloudModel, refresh }
 }

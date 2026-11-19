@@ -50,9 +50,9 @@ const CATEGORY_LABEL: Record<NewsCategory, string> = {
 const CATEGORY_ORDER: NewsCategory[] = ['macro', 'equities', 'rates', 'tech', 'energy', 'crypto', 'corporate']
 
 const SENTIMENT_META = {
-  bullish: { dot: 'bg-bull', label: '偏多' },
-  bearish: { dot: 'bg-bear', label: '偏空' },
-  neutral: { dot: 'bg-dim', label: '中性' },
+  bullish: { dot: 'bg-bull', label: '利好', tone: 'text-bull' },
+  bearish: { dot: 'bg-bear', label: '利空', tone: 'text-bear' },
+  neutral: { dot: 'bg-dim', label: '中性', tone: 'text-faint' },
 } as const
 
 const SOURCE_TONE: Record<string, 'gold' | 'ice' | 'iris' | 'bull' | 'bear' | 'neutral'> = {
@@ -207,8 +207,10 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
             ) : (
               <span className="flex items-center gap-1.5 text-bull">
                 <Languages className="size-3" /> 华文翻译已就绪（{translatedCount}/{articles.length} 条）
-                {translatedModel && (
-                  <span className="text-faint">· Powered by {modelDisplayName(translatedModel)}</span>
+                {(translatedModel ?? news.cloudModel) && (
+                  <Badge tone="gold">
+                    Powered by {modelDisplayName((translatedModel ?? news.cloudModel)!)}
+                  </Badge>
                 )}
               </span>
             )
@@ -344,6 +346,7 @@ export function NewsHubPage({ settings, symbol, onOpenSettings }: NewsHubPagePro
                 <div className="flex items-center justify-between gap-2">
                   <span className="flex min-w-0 items-center gap-1.5">
                     <span className={cn('size-1.5 shrink-0 rounded-full', sentiment.dot)} title={sentiment.label} />
+                    <span className={cn('font-mono text-[9.5px]', sentiment.tone)}>{sentiment.label}</span>
                     <Badge tone={SOURCE_TONE[meta.accent]}>{article.sourceName}</Badge>
                     <span className="font-mono text-[9.5px] text-faint">
                       {article.region === 'malaysia' ? '🇲🇾' : isCrypto ? '₿' : '🇺🇸'}

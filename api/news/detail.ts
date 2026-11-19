@@ -3,6 +3,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { buildNewsDetail } from '../_lib/ai.js'
 import { loadKeys } from '../_lib/env.js'
 import { extractArticle } from '../_lib/extract.js'
+import { SERVER_FLASH_MODEL, SERVER_LITE_MODEL, SERVER_PRO_MODEL } from '../_lib/geminiServer.js'
 import { STORE_KEYS, TTL, readJson, writeJson } from '../_lib/store.js'
 import type { NewsDetail, NewsSourceId, ServerArticle } from '../_lib/types.js'
 
@@ -67,16 +68,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const title = pick('title')
   const id = pick('id') || `cloud-${hashId(`${url}|${title}`)}`
   const refresh = pick('refresh') === '1'
+  const aiRouting = pick('aiRouting')
+  const geminiModel = pick('geminiModel')
+
+  const requestedModel =
+    geminiModel ||
+    (aiRouting === 'pro'
+      ? SERVER_PRO_MODEL
+      : aiRouting === 'lite'
+        ? SERVER_LITE_MODEL
+        : SERVER_FLASH_MODEL)
+  const cacheKey = STORE_KEYS.newsDetail(
+    requestedModel === SERVER_FLASH_MODEL ? id : `${id}:${requestedModel}`,
+  )
 
   if (!url && !title) {
     res.status(400).json({ ok: false, error: '缺少 url 或 title 参数' })
     return
   }
 
-  // 命中云端缓存：秒开，不再消耗 API 额度
+  // 命中云端缓存：秒开，不再消耗 API 额度（仅命中真实 AI 缓存）
   if (!refresh) {
-    const cached = await readJson<NewsDetail>(STORE_KEYS.newsDetail(id))
-    if (cached) {
+    const cached = await readJson<NewsDetail>(cacheKey)
+    if (cached && cached.model !== 'local') {
       res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600')
       res.status(200).json({ ok: true, cached: true, detail: cached })
       return
@@ -117,7 +131,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   // 2) AI 摘要要点 + 五大资产推演 + 全文翻译
   let detail: NewsDetail
   try {
-    detail = await buildNewsDetail({ article, fullText, apiKey: keys.gemini })
+    detail = await buildNewsDetail({ article, fullText, apiKey: keys.gemini, model: requestedModel })
   } catch (error) {
     res.status(200).json({
       ok: false,
@@ -142,8 +156,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   detail.extraction = extracted.mode === 'unavailable' && !extracted.text ? 'unavailable' : extracted.mode
 
-  // 3) 缓存结果（全文抓取 + 全篇翻译 + AI 推演）
-  await writeJson(STORE_KEYS.newsDetail(id), detail, TTL.detail)
+  // 3) 仅缓存真实 AI 结果（避免未配置服务端 Key 时把空降级结果写入 7 天缓存）
+  if (detail.model !== 'local') {
+    await writeJson(cacheKey, detail, TTL.detail)
+  }
 
   res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600')
   res.status(200).json({ ok: true, cached: false, detail })

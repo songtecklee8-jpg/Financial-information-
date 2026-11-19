@@ -4,7 +4,9 @@ import { LayoutGrid } from 'lucide-react'
 import type { AiVerdict } from '@/types'
 import { AiChatDock } from '@/components/ai/AiChatDock'
 import { ApiSettingsModal } from '@/components/ApiSettingsModal'
+import { BondsTrackerPage } from '@/components/bonds/BondsTrackerPage'
 import { CandleChart } from '@/components/chart/CandleChart'
+import { EarningsCalendarPage } from '@/components/earnings/EarningsCalendarPage'
 import { MacroPanel } from '@/components/macro/MacroPanel'
 import { NewsHubPage } from '@/components/news/NewsHubPage'
 import { PaperTradingPage } from '@/components/paper/PaperTradingPage'
@@ -130,6 +132,17 @@ export default function App() {
 
         {view === 'news' ? (
           <NewsHubPage settings={api.settings} symbol={symbol} onOpenSettings={openSettings} />
+        ) : view === 'earnings' ? (
+          <EarningsCalendarPage
+            settings={api.settings}
+            onSelectSymbol={(sym) => {
+              setSymbol(sym)
+              setView('equity')
+            }}
+            onOpenSettings={openSettings}
+          />
+        ) : view === 'bonds' ? (
+          <BondsTrackerPage settings={api.settings} onOpenSettings={openSettings} />
         ) : view === 'paper' ? (
           <PaperTradingPage settings={api.settings} onOpenSettings={openSettings} />
         ) : (
@@ -180,7 +193,15 @@ export default function App() {
               </div>
 
               <aside className="min-w-0 space-y-3 xl:col-span-4">
-                <MacroPanel macro={macro} onRefresh={refreshMacro} />
+                <MacroPanel
+                  macro={macro}
+                  onRefresh={refreshMacro}
+                  settings={api.settings}
+                  news={news.articles}
+                  hasGemini={api.hasGemini}
+                  onOpenSettings={openSettings}
+                  onOpenBonds={() => setView('bonds')}
+                />
               </aside>
             </div>
 

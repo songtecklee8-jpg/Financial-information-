@@ -99,31 +99,32 @@ export function NewsImpactPanel({ article, settings, onClose }: NewsImpactPanelP
   const hasGemini = settings.geminiKey.trim().length > 0
 
   const run = useMemo(
-    () => () => {
-      abortRef.current?.abort()
-      const controller = new AbortController()
-      abortRef.current = controller
-      setLoading(true)
-      setImpact(null)
-      runNewsImpact(article, settings.geminiKey, aiRoute(settings, 'flash'), controller.signal)
-        .then((result) => {
-          if (controller.signal.aborted) return
-          setImpact(result)
-        })
-        .catch(() => {
-          if (controller.signal.aborted) return
-          setImpact(null)
-        })
-        .finally(() => {
-          if (!controller.signal.aborted) setLoading(false)
-        })
-    },
-    [article, settings.geminiKey, settings.aiRouting, settings.geminiModel, settings],
+    () =>
+      (tier: 'flash' | 'pro' = 'flash') => {
+        abortRef.current?.abort()
+        const controller = new AbortController()
+        abortRef.current = controller
+        setLoading(true)
+        setImpact(null)
+        runNewsImpact(article, settings.geminiKey, aiRoute(settings, tier), controller.signal)
+          .then((result) => {
+            if (controller.signal.aborted) return
+            setImpact(result)
+          })
+          .catch(() => {
+            if (controller.signal.aborted) return
+            setImpact(null)
+          })
+          .finally(() => {
+            if (!controller.signal.aborted) setLoading(false)
+          })
+      },
+    [article, settings],
   )
 
   // 打开即自动运行一次推演
   useEffect(() => {
-    run()
+    run('flash')
     return () => abortRef.current?.abort()
   }, [run])
 
@@ -163,7 +164,16 @@ export function NewsImpactPanel({ article, settings, onClose }: NewsImpactPanelP
           <span className="flex items-center gap-2">
             <button
               type="button"
-              onClick={run}
+              onClick={() => run('pro')}
+              disabled={loading || !hasGemini}
+              className="inline-flex items-center gap-1 rounded-lg border border-iris/40 bg-iris/10 px-2.5 py-1.5 text-iris transition hover:bg-iris/20 disabled:opacity-45"
+            >
+              <Sparkles className="size-3" />
+              Pro 深度推演
+            </button>
+            <button
+              type="button"
+              onClick={() => run('flash')}
               disabled={loading}
               className="inline-flex items-center gap-1 rounded-lg border border-line-2 px-2.5 py-1.5 text-dim transition hover:border-gold/50 hover:text-gold disabled:opacity-50"
             >

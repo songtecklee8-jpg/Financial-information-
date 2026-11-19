@@ -130,3 +130,19 @@ export async function generateServer(options: GenerateServerOptions): Promise<Se
   }
   throw lastError instanceof Error ? lastError : new Error('Gemini 全部模型均不可用')
 }
+
+export function resolveServerModel(
+  defaultTier: 'lite' | 'flash' | 'pro',
+  aiRouting?: string,
+  customModel?: string,
+): string {
+  const override = (customModel ?? '').trim()
+  if (override) return override
+  if (aiRouting === 'pro') return SERVER_PRO_MODEL
+  if (aiRouting === 'flash') return SERVER_FLASH_MODEL
+  if (aiRouting === 'lite') return SERVER_LITE_MODEL
+  if (defaultTier === 'pro') return SERVER_PRO_MODEL
+  if (defaultTier === 'lite') return SERVER_LITE_MODEL
+  return SERVER_FLASH_MODEL
+}
+
