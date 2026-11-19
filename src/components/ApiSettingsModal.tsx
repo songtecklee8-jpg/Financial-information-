@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Eye, EyeOff, ExternalLink, LoaderCircle, PlugZap, ShieldCheck } from 'lucide-react'
+import { Eye, EyeOff, ExternalLink, LoaderCircle, PlugZap, ShieldCheck, Cpu, Database } from 'lucide-react'
 
 import type {
   AiFallbackConfig,
@@ -402,6 +402,7 @@ export function ApiSettingsModal({
     ...settings,
     aiFallback: normalizeAiFallback(settings.aiFallback),
   }))
+  const [activeTab, setActiveTab] = useState<'ai' | 'market'>('ai')
   const [testingId, setTestingId] = useState<ProviderId | null>(null)
   const [backupStatus, setBackupStatus] = useState<Partial<Record<AiFallbackProviderId, BackupTestResult>>>({})
   const draftRef = useRef(draft)
@@ -417,6 +418,7 @@ export function ApiSettingsModal({
         aiFallback: normalizeAiFallback(settings.aiFallback),
       })
       setBackupStatus({})
+      setActiveTab('ai')
     }
   }, [open, settings])
 
@@ -536,238 +538,259 @@ export function ApiSettingsModal({
         </div>
       }
     >
-      <div className="space-y-5">
-        <div className="panel-flat flex items-start gap-2.5 px-3 py-2.5">
-          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-bull" />
-          <p className="text-[11.5px] leading-relaxed text-dim">
-            终端内置<span className="text-ink">多引擎自动故障转移</span>：当主引擎限流、配额耗尽或报错时，
-            会在毫秒级自动切换至下一个可用引擎，确保美股、马股（.KL）与加密货币
-            <span className="text-ink">持续输出实时数据</span>。当前已配置
-            <span className="text-gold"> {configuredCount} </span>个行情引擎，未配置任何 Key 时自动降级为高仿真基准数据，界面绝不空白。
-          </p>
+      <div className="space-y-4">
+        {/* 顶部 Tab 导航：一打开默认显示 AI 与免费备用服务商，绝不遗漏 */}
+        <div className="flex items-center gap-2 border-b border-line pb-3">
+          <button
+            type="button"
+            onClick={() => setActiveTab('ai')}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-lg px-3 py-1.5 font-mono text-[11.5px] font-medium transition',
+              activeTab === 'ai'
+                ? 'border border-gold/40 bg-gold/15 text-gold shadow-sm'
+                : 'border border-line bg-void/55 text-dim hover:text-ink',
+            )}
+          >
+            <Cpu className="size-3.5" />
+            AI 主力与免费备用引擎 ({backupConfiguredCount + (draft.geminiKey.trim() ? 1 : 0)})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('market')}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-lg px-3 py-1.5 font-mono text-[11.5px] font-medium transition',
+              activeTab === 'market'
+                ? 'border border-ice/40 bg-ice/15 text-ice shadow-sm'
+                : 'border border-line bg-void/55 text-dim hover:text-ink',
+            )}
+          >
+            <Database className="size-3.5" />
+            行情数据引擎 ({configuredCount} / {PROVIDER_IDS.length})
+          </button>
         </div>
 
-         {/* Gemini（AI 三级模型路由 + 翻译 + 跨市场推演 + 交易复盘） */}
-        <div className="rounded-xl border border-gold/25 bg-gold/[0.04] p-3">
-          <div className="mb-2 flex items-center gap-2">
-            <span className="font-mono text-[11px] font-semibold tracking-[0.14em] text-gold uppercase">
-              Gemini · AI 模型路由与智能分析
-            </span>
-          </div>
-          <div className="space-y-3.5">
-            <TextField
-              label="Google Gemini API Key"
-              hint="用于新闻华文翻译、跨市场涨跌概率推演、个股诊断与交易复盘；模型将按下方路由模式自动分配。"
-              value={draft.geminiKey}
-              onChange={(value) => setDraft((current) => ({ ...current, geminiKey: value }))}
-              placeholder="例如 AIzaSyD-xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-              docsUrl="https://aistudio.google.com/app/apikey"
-              docsLabel="前往 Google AI Studio"
-            />
-
-            {/* AI 模型路由模式 */}
-            <div>
-              <label className="font-mono text-[11px] tracking-[0.1em] text-dim uppercase">
-                AI 模型路由模式
-              </label>
-              <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                {ROUTING_OPTIONS.map((option) => {
-                  const active = draft.aiRouting === option.key
-                  return (
-                    <button
-                      key={option.key}
-                      type="button"
-                      onClick={() =>
-                        setDraft((current) => ({ ...current, aiRouting: option.key }))
-                      }
-                      className={cn(
-                        'rounded-lg border px-2.5 py-2 text-left transition',
-                        active
-                          ? 'border-gold/55 bg-gold/12'
-                          : 'border-line bg-void/50 hover:border-line-2',
-                      )}
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className={cn(
-                            'size-2.5 shrink-0 rounded-full border',
-                            active ? 'border-gold bg-gold' : 'border-faint',
-                          )}
-                        />
-                        <span
-                          className={cn(
-                            'font-mono text-[11px] font-medium',
-                            active ? 'text-gold' : 'text-dim',
-                          )}
-                        >
-                          {option.title}
-                        </span>
-                        {option.key === 'auto' && (
-                          <span className="rounded border border-bull/40 bg-bull/10 px-1 py-[1px] font-mono text-[9px] text-bull">
-                            默认
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-1 text-[10.5px] leading-relaxed text-faint">{option.desc}</p>
-                    </button>
-                  )
-                })}
-              </div>
-
-              {/* 三级模型职责与降级链 */}
-              <div className="mt-2 rounded-lg border border-line bg-void/40 p-2.5">
-                <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.14em] text-faint uppercase">
-                  三级模型分工
-                </div>
-                <ul className="space-y-1">
-                  {[...TIER_ORDER].reverse().map((tier) => (
-                    <li key={tier} className="flex flex-wrap items-baseline gap-x-2 text-[10.5px]">
-                      <span className="font-mono text-[11px] font-medium text-ink">
-                        {TIER_LABEL[tier]}
-                      </span>
-                      <span className="font-mono text-[9.5px] text-faint">{TIER_MODEL[tier]}</span>
-                      <span className="text-faint">{TIER_ROLE[tier]}</span>
-                    </li>
-                  ))}
-                </ul>
-                <p className="mt-1.5 border-t border-line/60 pt-1.5 text-[10px] leading-relaxed text-faint">
-                  限流（429）或模型不可用时自动无缝降级：
-                  <span className="font-mono text-dim"> Pro → Flash → Flash-Lite</span>
-                  ，绝不中断体验。
-                </p>
-              </div>
-            </div>
-
-            {/* 高级：自定义模型覆盖 */}
-            <div>
-              <label className="font-mono text-[11px] tracking-[0.1em] text-dim uppercase">
-                自定义模型覆盖（高级 · 可选）
-              </label>
-              <input
-                list="gemini-models"
-                value={draft.geminiModel}
-                spellCheck={false}
-                placeholder="留空则由上方路由模式自动决定"
-                onChange={(event) =>
-                  setDraft((current) => ({ ...current, geminiModel: event.target.value }))
-                }
-                className="mt-1.5 w-full rounded-lg border border-line bg-void/70 px-3 py-2 font-mono text-[12px] text-ink transition placeholder:text-faint/70 focus:border-gold/55"
-              />
-              <datalist id="gemini-models">
-                {MODEL_SUGGESTIONS.map((model) => (
-                  <option key={model} value={model} />
-                ))}
-              </datalist>
-              <p className="mt-1.5 text-[11px] leading-relaxed text-faint">
-                填写后将作为全部任务的优先模型，失败时仍自动向下降级；留空则完全交由三级路由分配。
+        {activeTab === 'ai' ? (
+          <div className="space-y-5">
+            <div className="panel-flat flex items-start gap-2.5 px-3 py-2.5">
+              <ShieldCheck className="mt-0.5 size-4 shrink-0 text-bull" />
+              <p className="text-[11.5px] leading-relaxed text-dim">
+                终端内置<span className="text-ink">多引擎自动故障转移与免费服务商兜底</span>：Gemini 保持绝对第一主力；
+                当遇到 429 限流、配额耗尽或并发排队时，自动无缝切换至下方已配置的永久免费备用服务商（Groq、OpenRouter、Mistral、Cloudflare）。
               </p>
             </div>
-          </div>
-        </div>
 
-        {/* 永久免费多服务商兜底与并发分流（备用 AI 引擎） */}
-        <div className="rounded-xl border border-ice/25 bg-ice/[0.03] p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-[11px] font-semibold tracking-[0.14em] text-ice uppercase">
-                永久免费多服务商兜底与并发分流（备用援军）
-              </span>
-              <span className="rounded border border-ice/35 bg-ice/10 px-1.5 py-[1px] font-mono text-[10px] text-ice">
-                已配置 {backupConfiguredCount} / 5 个
-              </span>
-            </div>
+            {/* 核心：永久免费多服务商兜底与并发分流（排在最显眼位置） */}
+            <div className="rounded-xl border border-ice/25 bg-ice/[0.03] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-[11px] font-semibold tracking-[0.14em] text-ice uppercase">
+                    永久免费多服务商兜底与并发分流（备用援军）
+                  </span>
+                  <span className="rounded border border-ice/35 bg-ice/10 px-1.5 py-[1px] font-mono text-[10px] text-ice">
+                    已配置 {backupConfiguredCount} / 5 个
+                  </span>
+                </div>
 
-            <button
-              type="button"
-              role="switch"
-              aria-checked={fallbackConfig.enabled}
-              onClick={() => patchFallback({ enabled: !fallbackConfig.enabled })}
-              className={cn(
-                'inline-flex items-center gap-2 rounded-lg border px-2.5 py-1 font-mono text-[10.5px] transition',
-                fallbackConfig.enabled
-                  ? 'border-bull/50 bg-bull/12 text-bull'
-                  : 'border-line-2 bg-void/60 text-faint hover:text-dim',
-              )}
-            >
-              <span
-                className={cn(
-                  'inline-block size-2 rounded-full',
-                  fallbackConfig.enabled ? 'bg-bull' : 'bg-faint',
-                )}
-              />
-              仅在 Gemini 限额/多任务并发时启用兜底：{fallbackConfig.enabled ? '已开启' : '已关闭'}
-            </button>
-          </div>
-
-          <p className="mt-2 text-[11px] leading-relaxed text-dim">
-            所有 AI 任务<span className="text-ink">默认优先走上方 Gemini 链路</span>；仅当 Gemini 遇到 429 限流、
-            配额耗尽、超时报错、未配置 Gemini Key，或批量翻译/研判并发排队时，自动按顺序调用已填入 Key 的服务商。
-            未填写的服务商会自动跳过绝不报错；若全部在线引擎均不可用，则平滑回退至本地量化与启发式引擎。
-          </p>
-
-          <div className="mt-3 space-y-3">
-            <div>
-              <div className="mb-2 font-mono text-[10px] tracking-[0.14em] text-ice uppercase">
-                前 4 大永久免费主力替补（Groq / OpenRouter / Mistral / Cloudflare）
-              </div>
-              <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
-                {AI_BACKUP_PROVIDERS.filter((m) => m.id !== 'nvidia').map((meta) => (
-                  <BackupProviderCard
-                    key={meta.id}
-                    meta={meta}
-                    config={fallbackConfig}
-                    status={backupStatus[meta.id]}
-                    onPatch={patchFallback}
-                    onTest={() => void runBackupTest(meta.id)}
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={fallbackConfig.enabled}
+                  onClick={() => patchFallback({ enabled: !fallbackConfig.enabled })}
+                  className={cn(
+                    'inline-flex items-center gap-2 rounded-lg border px-2.5 py-1 font-mono text-[10.5px] transition',
+                    fallbackConfig.enabled
+                      ? 'border-bull/50 bg-bull/12 text-bull'
+                      : 'border-line-2 bg-void/60 text-faint hover:text-dim',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'inline-block size-2 rounded-full',
+                      fallbackConfig.enabled ? 'bg-bull' : 'bg-faint',
+                    )}
                   />
-                ))}
+                  故障转移开关：{fallbackConfig.enabled ? '已开启' : '已关闭'}
+                </button>
+              </div>
+
+              <p className="mt-2 text-[11px] leading-relaxed text-dim">
+                请在此处直接填写四大永久免费 AI 服务商的 API Key（未填写的服务商将自动跳过）：
+              </p>
+
+              <div className="mt-3 space-y-3">
+                <div>
+                  <div className="mb-2 font-mono text-[10px] tracking-[0.14em] text-ice uppercase">
+                    前 4 大永久免费主力替补（Groq / OpenRouter / Mistral / Cloudflare）
+                  </div>
+                  <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
+                    {AI_BACKUP_PROVIDERS.filter((m) => m.id !== 'nvidia').map((meta) => (
+                      <BackupProviderCard
+                        key={meta.id}
+                        meta={meta}
+                        config={fallbackConfig}
+                        status={backupStatus[meta.id]}
+                        onPatch={patchFallback}
+                        onTest={() => void runBackupTest(meta.id)}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-2 font-mono text-[10px] tracking-[0.14em] text-faint uppercase">
+                    其它深度备用引擎（可选）
+                  </div>
+                  <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
+                    {AI_BACKUP_PROVIDERS.filter((m) => m.id === 'nvidia').map((meta) => (
+                      <BackupProviderCard
+                        key={meta.id}
+                        meta={meta}
+                        config={fallbackConfig}
+                        status={backupStatus[meta.id]}
+                        onPatch={patchFallback}
+                        onTest={() => void runBackupTest(meta.id)}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div>
-              <div className="mb-2 font-mono text-[10px] tracking-[0.14em] text-faint uppercase">
-                其它深度备用引擎（可选）
+            {/* Gemini（AI 主力） */}
+            <div className="rounded-xl border border-gold/25 bg-gold/[0.04] p-3">
+              <div className="mb-2 flex items-center gap-2">
+                <span className="font-mono text-[11px] font-semibold tracking-[0.14em] text-gold uppercase">
+                  Gemini · 第一主力 AI 引擎
+                </span>
               </div>
-              <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
-                {AI_BACKUP_PROVIDERS.filter((m) => m.id === 'nvidia').map((meta) => (
-                  <BackupProviderCard
-                    key={meta.id}
-                    meta={meta}
-                    config={fallbackConfig}
-                    status={backupStatus[meta.id]}
-                    onPatch={patchFallback}
-                    onTest={() => void runBackupTest(meta.id)}
+              <div className="space-y-3.5">
+                <TextField
+                  label="Google Gemini API Key"
+                  hint="用于新闻华文翻译、跨市场涨跌概率推演、个股诊断与交易复盘；模型将按下方路由模式自动分配。"
+                  value={draft.geminiKey}
+                  onChange={(value) => setDraft((current) => ({ ...current, geminiKey: value }))}
+                  placeholder="例如 AIzaSyD-xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                  docsUrl="https://aistudio.google.com/app/apikey"
+                  docsLabel="前往 Google AI Studio"
+                />
+
+                {/* AI 模型路由模式 */}
+                <div>
+                  <label className="font-mono text-[11px] tracking-[0.1em] text-dim uppercase">
+                    AI 模型路由模式
+                  </label>
+                  <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                    {ROUTING_OPTIONS.map((option) => {
+                      const active = draft.aiRouting === option.key
+                      return (
+                        <button
+                          key={option.key}
+                          type="button"
+                          onClick={() =>
+                            setDraft((current) => ({ ...current, aiRouting: option.key }))
+                          }
+                          className={cn(
+                            'rounded-lg border px-2.5 py-2 text-left transition',
+                            active
+                              ? 'border-gold/55 bg-gold/12'
+                              : 'border-line bg-void/50 hover:border-line-2',
+                          )}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={cn(
+                                'size-2.5 shrink-0 rounded-full border',
+                                active ? 'border-gold bg-gold' : 'border-faint',
+                              )}
+                            />
+                            <span
+                              className={cn(
+                                'font-mono text-[11px] font-medium',
+                                active ? 'text-gold' : 'text-dim',
+                              )}
+                            >
+                              {option.title}
+                            </span>
+                            {option.key === 'auto' && (
+                              <span className="rounded border border-bull/40 bg-bull/10 px-1 py-[1px] font-mono text-[9px] text-bull">
+                                默认
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 text-[10.5px] leading-relaxed text-faint">{option.desc}</p>
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  {/* 三级模型职责与降级链 */}
+                  <div className="mt-2 rounded-lg border border-line bg-void/40 p-2.5">
+                    <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.14em] text-faint uppercase">
+                      三级模型分工
+                    </div>
+                    <ul className="space-y-1">
+                      {[...TIER_ORDER].reverse().map((tier) => (
+                        <li key={tier} className="flex flex-wrap items-baseline gap-x-2 text-[10.5px]">
+                          <span className="font-mono text-[11px] font-medium text-ink">
+                            {TIER_LABEL[tier]}
+                          </span>
+                          <span className="font-mono text-[9.5px] text-faint">{TIER_MODEL[tier]}</span>
+                          <span className="text-faint">{TIER_ROLE[tier]}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+
+                {/* 高级：自定义模型覆盖 */}
+                <div>
+                  <label className="font-mono text-[11px] tracking-[0.1em] text-dim uppercase">
+                    自定义模型覆盖（高级 · 可选）
+                  </label>
+                  <input
+                    list="gemini-models"
+                    value={draft.geminiModel}
+                    spellCheck={false}
+                    placeholder="留空则由上方路由模式自动决定"
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, geminiModel: event.target.value }))
+                    }
+                    className="mt-1.5 w-full rounded-lg border border-line bg-void/70 px-3 py-2 font-mono text-[12px] text-ink transition placeholder:text-faint/70 focus:border-gold/55"
                   />
-                ))}
+                  <datalist id="gemini-models">
+                    {MODEL_SUGGESTIONS.map((model) => (
+                      <option key={model} value={model} />
+                    ))}
+                  </datalist>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-
-        {/* 行情引擎 */}
-        <div>
-          <div className="mb-2 font-mono text-[11px] font-semibold tracking-[0.14em] text-dim uppercase">
-            行情引擎 · 全部行情数据源
+        ) : (
+          /* 行情引擎 Tab */
+          <div>
+            <div className="mb-2 font-mono text-[11px] font-semibold tracking-[0.14em] text-dim uppercase">
+              行情引擎 · 全部行情数据源
+            </div>
+            <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
+              {PROVIDER_IDS.map((id) => (
+                <ProviderCard
+                  key={id}
+                  id={id}
+                  config={draft.providers[id] ?? { apiKey: '', secretKey: '' }}
+                  status={statusMap.get(id)?.health}
+                  testing={testingId === id}
+                  onChange={(next) => patchProvider(id, next)}
+                  onTest={() => runTest(id)}
+                />
+              ))}
+            </div>
+            <p className="mt-2 text-[10.5px] leading-relaxed text-faint">
+              故障转移顺序：美股 Finnhub → Alpaca → FMP → Alpha Vantage → Tiingo → Yahoo → Twelve Data；
+              马股 Yahoo → FMP → Twelve Data；加密 Binance → CoinGecko → Yahoo。
+            </p>
           </div>
-          <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
-            {PROVIDER_IDS.map((id) => (
-              <ProviderCard
-                key={id}
-                id={id}
-                config={draft.providers[id] ?? { apiKey: '', secretKey: '' }}
-                status={statusMap.get(id)?.health}
-                testing={testingId === id}
-                onChange={(next) => patchProvider(id, next)}
-                onTest={() => runTest(id)}
-              />
-            ))}
-          </div>
-          <p className="mt-2 text-[10.5px] leading-relaxed text-faint">
-            故障转移顺序：美股 Finnhub → Alpaca → FMP → Alpha Vantage → Tiingo → Yahoo → Twelve Data；
-            马股 Yahoo → FMP → Twelve Data；加密 Binance → CoinGecko → Yahoo。
-            10Y / MAX 长历史请求会优先命中 Tiingo / Yahoo / FMP 等历史深度充足的引擎。
-          </p>
-        </div>
+        )}
       </div>
     </Modal>
   )
