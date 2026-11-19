@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Eye, EyeOff, ExternalLink, LoaderCircle, PlugZap, ShieldCheck, Cpu, Database } from 'lucide-react'
+import { Eye, EyeOff, ExternalLink, LoaderCircle, PlugZap, ShieldCheck, Cpu, Database, Newspaper } from 'lucide-react'
 
 import type {
   AiFallbackConfig,
@@ -402,7 +402,7 @@ export function ApiSettingsModal({
     ...settings,
     aiFallback: normalizeAiFallback(settings.aiFallback),
   }))
-  const [activeTab, setActiveTab] = useState<'ai' | 'market'>('ai')
+  const [activeTab, setActiveTab] = useState<'ai' | 'news' | 'market'>('ai')
   const [testingId, setTestingId] = useState<ProviderId | null>(null)
   const [backupStatus, setBackupStatus] = useState<Partial<Record<AiFallbackProviderId, BackupTestResult>>>({})
   const draftRef = useRef(draft)
@@ -526,6 +526,7 @@ export function ApiSettingsModal({
                     cloudflareApiToken: fb.cloudflareApiToken.trim(),
                     nvidiaKey: fb.nvidiaKey.trim(),
                   },
+                  newsDataKey: draft.newsDataKey?.trim() ?? '',
                   providers,
                 })
                 onClose()
@@ -539,8 +540,8 @@ export function ApiSettingsModal({
       }
     >
       <div className="space-y-4">
-        {/* 顶部 Tab 导航：一打开默认显示 AI 与免费备用服务商，绝不遗漏 */}
-        <div className="flex items-center gap-2 border-b border-line pb-3">
+        {/* 顶部 Tab 导航：AI 引擎 / 新闻资讯 API / 行情数据引擎 */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-line pb-3">
           <button
             type="button"
             onClick={() => setActiveTab('ai')}
@@ -553,6 +554,19 @@ export function ApiSettingsModal({
           >
             <Cpu className="size-3.5" />
             AI 主力与免费备用引擎 ({backupConfiguredCount + (draft.geminiKey.trim() ? 1 : 0)})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('news')}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-lg px-3 py-1.5 font-mono text-[11.5px] font-medium transition',
+              activeTab === 'news'
+                ? 'border border-bull/40 bg-bull/15 text-bull shadow-sm'
+                : 'border border-line bg-void/55 text-dim hover:text-ink',
+            )}
+          >
+            <Newspaper className="size-3.5" />
+            多源新闻资讯 API ({draft.newsDataKey?.trim() ? '1已配置' : '默认RSS'})
           </button>
           <button
             type="button"
@@ -745,7 +759,7 @@ export function ApiSettingsModal({
                 {/* 高级：自定义模型覆盖 */}
                 <div>
                   <label className="font-mono text-[11px] tracking-[0.1em] text-dim uppercase">
-                    自定义模型覆盖（高级 · 可选）
+                    自定义模型覆盖（高级 ·可选）
                   </label>
                   <input
                     list="gemini-models"
@@ -763,6 +777,38 @@ export function ApiSettingsModal({
                     ))}
                   </datalist>
                 </div>
+              </div>
+            </div>
+          </div>
+        ) : activeTab === 'news' ? (
+          /* 多源新闻资讯 API Tab */
+          <div className="space-y-4">
+            <div className="panel-flat flex items-start gap-2.5 px-3 py-2.5">
+              <Newspaper className="mt-0.5 size-4 shrink-0 text-bull" />
+              <p className="text-[11.5px] leading-relaxed text-dim">
+                APEX Terminal 支持多源财经资讯聚合（NewsData.io Finance、Finnhub News、Alpha Vantage News 与官方 RSS）。
+                填写下方 <span className="text-ink">NewsData.io API Key</span> 后，后台定时同步接口与新闻中心将实时拉取美国与马来西亚商业财经快讯。
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-bull/25 bg-bull/[0.03] p-3 space-y-4">
+              <TextField
+                label="NewsData.io Finance API Key"
+                hint="用于抓取全球与大马精选商业、宏观与股票财经新闻（支持自动多源去重与 Gemini 华文翻译）。"
+                value={draft.newsDataKey ?? ''}
+                onChange={(value) => setDraft((current) => ({ ...current, newsDataKey: value }))}
+                placeholder="例如 pub_xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                docsUrl="https://newsdata.io/register"
+                docsLabel="前往 NewsData.io 官网获取免费 Key"
+              />
+
+              <div className="rounded-lg border border-line bg-void/50 p-3 space-y-2">
+                <div className="font-mono text-[11px] font-semibold text-ink">其它新闻数据源说明</div>
+                <ul className="space-y-1 text-[11px] text-faint">
+                  <li>• <span className="text-dim">Finnhub News</span>：复用「行情数据引擎」中的 Finnhub API Key 自动拉取通用财经新闻。</li>
+                  <li>• <span className="text-dim">Alpha Vantage News</span>：复用「行情数据引擎」中的 Alpha Vantage Key 获取新闻多空情绪评分。</li>
+                  <li>• <span className="text-dim">Bursa Malaysia RSS / BERNAMA / Yahoo Finance RSS</span>：免 Key，内置定时自动解析。</li>
+                </ul>
               </div>
             </div>
           </div>

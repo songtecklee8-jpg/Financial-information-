@@ -202,6 +202,8 @@ export interface ApiSettings {
   aiRouting: AiRoutingMode
   /** 永久免费多服务商兜底与并发分流配置 */
   aiFallback?: AiFallbackConfig
+  /** NewsData.io 财经新闻 API Key */
+  newsDataKey?: string
   /** 各行情引擎的密钥配置（Key + Secret） */
   providers: Record<ProviderId, ProviderConfig>
 }

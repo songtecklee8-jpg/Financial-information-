@@ -69,6 +69,7 @@ function read(): ApiSettings {
       geminiModel,
       aiRouting: readRouting(parsed.aiRouting),
       aiFallback: normalizeAiFallback(parsed.aiFallback),
+      newsDataKey: typeof parsed.newsDataKey === 'string' ? parsed.newsDataKey : '',
       providers,
     }
   } catch {
