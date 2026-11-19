@@ -547,7 +547,7 @@ export function ApiSettingsModal({
           </p>
         </div>
 
-        {/* Gemini（AI 三级模型路由 + 翻译 + 跨市场推演 + 交易复盘） */}
+         {/* Gemini（AI 三级模型路由 + 翻译 + 跨市场推演 + 交易复盘） */}
         <div className="rounded-xl border border-gold/25 bg-gold/[0.04] p-3">
           <div className="mb-2 flex items-center gap-2">
             <span className="font-mono text-[11px] font-semibold tracking-[0.14em] text-gold uppercase">
