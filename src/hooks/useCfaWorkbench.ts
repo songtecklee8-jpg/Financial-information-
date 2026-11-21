@@ -5,6 +5,7 @@ import type {
   CfaMistakeRecord,
   CfaQaMessage,
   CfaQuestion,
+  CfaQuestionMode,
   CfaQuizAttempt,
   CfaTopicId,
   CfaUnit,
@@ -23,6 +24,7 @@ interface CfaPersistedState {
   mistakes: CfaMistakeRecord[]
   lastUnitId: string | null
   lastSubView: CfaSubView
+  questionMode: CfaQuestionMode
 }
 
 const DEFAULT_STATE: CfaPersistedState = {
@@ -33,6 +35,7 @@ const DEFAULT_STATE: CfaPersistedState = {
   mistakes: [],
   lastUnitId: STARTER_CFA_UNITS[0]?.id ?? null,
   lastSubView: 'study',
+  questionMode: 'mixed',
 }
 
 function loadState(): CfaPersistedState {
@@ -57,6 +60,10 @@ function loadState(): CfaPersistedState {
         parsed.lastSubView === 'import'
           ? parsed.lastSubView
           : 'study',
+      questionMode:
+        parsed.questionMode === 'calculation' || parsed.questionMode === 'conceptual'
+          ? parsed.questionMode
+          : 'mixed',
     }
   } catch {
     return DEFAULT_STATE
@@ -94,6 +101,10 @@ export function useCfaWorkbench() {
 
   const setSubView = useCallback((subView: CfaSubView) => {
     setState((prev) => ({ ...prev, lastSubView: subView }))
+  }, [])
+
+  const setQuestionMode = useCallback((questionMode: CfaQuestionMode) => {
+    setState((prev) => ({ ...prev, questionMode }))
   }, [])
 
   const importUnits = useCallback((newUnits: CfaUnit[]) => {
@@ -323,6 +334,7 @@ export function useCfaWorkbench() {
     completedUnits,
     selectUnit,
     setSubView,
+    setQuestionMode,
     importUnits,
     deleteUnit,
     saveLecture,

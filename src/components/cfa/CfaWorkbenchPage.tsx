@@ -25,7 +25,14 @@ import {
   Upload,
 } from 'lucide-react'
 
-import type { ApiSettings, CfaQuestion, CfaTopicId, CfaUnitStatus, RelayMeta } from '@/types'
+import type {
+  ApiSettings,
+  CfaQuestion,
+  CfaQuestionMode,
+  CfaTopicId,
+  CfaUnitStatus,
+  RelayMeta,
+} from '@/types'
 import { useCfaWorkbench, type CfaSubView } from '@/hooks/useCfaWorkbench'
 import { formatRelayBadge, hasAnyAiConfigured } from '@/lib/aiFallback'
 import {
@@ -51,6 +58,93 @@ const STATUS_META: Record<CfaUnitStatus, { label: string; dot: string; text: str
   not_started: { label: '未开始', dot: 'bg-faint', text: 'text-faint' },
   in_progress: { label: '学习中', dot: 'bg-gold', text: 'text-gold' },
   completed: { label: '已完成', dot: 'bg-bull', text: 'text-bull' },
+}
+
+const QUESTION_MODE_OPTIONS: Array<{ value: CfaQuestionMode; label: string; title: string }> = [
+  { value: 'mixed', label: '混合模拟真题', title: '对齐 CFA L1 考场比例，兼顾情景计算与高难概念辨析' },
+  { value: 'calculation', label: '计算题为主', title: '优先命制公式代入、复利转换与 BA II Plus 实务运算题' },
+  { value: 'conceptual', label: '概念/准则辨析为主', title: '优先命制 MOST/LEAST likely、易混对比与考纲边界判定题' },
+]
+
+function QuestionModeSwitch({
+  value,
+  onChange,
+}: {
+  value: CfaQuestionMode
+  onChange: (next: CfaQuestionMode) => void
+}) {
+  return (
+    <div className="inline-flex flex-wrap items-center gap-1 rounded-lg border border-line bg-void/60 p-0.5">
+      <span className="px-2 font-mono text-[10px] text-faint">出题偏好</span>
+      {QUESTION_MODE_OPTIONS.map((opt) => {
+        const active = value === opt.value
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            title={opt.title}
+            onClick={() => onChange(opt.value)}
+            className={cn(
+              'rounded-md px-2.5 py-1 font-mono text-[10.5px] transition',
+              active
+                ? 'border border-gold/50 bg-gold/15 text-gold'
+                : 'border border-transparent text-dim hover:text-ink',
+            )}
+          >
+            {opt.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function QuestionAnalysisBlock({ question }: { question: CfaQuestion }) {
+  return (
+    <div className="space-y-2.5 rounded-lg border border-line bg-void/55 p-3.5 text-[11.5px] leading-relaxed text-dim">
+      <div>
+        <span className="font-mono font-semibold text-ice">完整推导与答案解析（正解 {question.answer}）：</span>
+        <span className="whitespace-pre-wrap text-ink/90">{question.explanation}</span>
+      </div>
+
+      {question.distractorAnalysis && (
+        <div className="space-y-1 border-t border-line/70 pt-2">
+          <div className="font-mono text-[10.5px] font-semibold text-dim">逐项正误与干扰项诊断：</div>
+          {(['A', 'B', 'C'] as const).map((opt) => {
+            const note = question.distractorAnalysis?.[opt]
+            if (!note) return null
+            const isCorrect = opt === question.answer
+            return (
+              <div key={opt} className="flex items-start gap-1.5 text-[11px]">
+                <span
+                  className={cn(
+                    'shrink-0 font-mono font-semibold',
+                    isCorrect ? 'text-bull' : 'text-bear',
+                  )}
+                >
+                  {opt}（{isCorrect ? '正解' : '干扰项'}）:
+                </span>
+                <span className={isCorrect ? 'text-ink/90' : 'text-dim'}>{note}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {question.examTrap && (
+        <div className="rounded-md border border-bear/35 bg-bear/[0.06] px-2.5 py-1.5 text-[11px] text-bear">
+          <span className="font-mono font-semibold">【考场避坑点】</span>
+          {question.examTrap}
+        </div>
+      )}
+
+      {question.ba2Tip && (
+        <div className="rounded-md border border-gold/30 bg-gold/[0.06] px-2.5 py-1.5 font-mono text-[11px] text-gold">
+          BA II Plus 按键：{question.ba2Tip}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function CfaWorkbenchPage({ settings, onOpenSettings }: CfaWorkbenchPageProps) {
@@ -200,7 +294,7 @@ export function CfaWorkbenchPage({ settings, onOpenSettings }: CfaWorkbenchPageP
     setQuizLoading(true)
     setQuizError(null)
     try {
-      const res = await generateUnitCheckpointQuiz(currentUnit, settings)
+      const res = await generateUnitCheckpointQuiz(currentUnit, settings, wb.questionMode)
       wb.saveQuizAttempt({
         unitId: currentUnit.id,
         questions: res.questions,
@@ -236,6 +330,7 @@ export function CfaWorkbenchPage({ settings, onOpenSettings }: CfaWorkbenchPageP
         wb.completedUnits,
         drillHistoryStems,
         settings,
+        wb.questionMode,
       )
       setDrillQuestion(res.question)
       setDrillRelay(res.relay)
@@ -924,7 +1019,8 @@ export function CfaWorkbenchPage({ settings, onOpenSettings }: CfaWorkbenchPageP
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <QuestionModeSwitch value={wb.questionMode} onChange={wb.setQuestionMode} />
                     <button
                       type="button"
                       onClick={() => switchSubView('study')}
@@ -1056,19 +1152,7 @@ export function CfaWorkbenchPage({ settings, onOpenSettings }: CfaWorkbenchPageP
                             })}
                           </div>
 
-                          {submitted && (
-                            <div className="space-y-1.5 rounded-lg border border-line bg-void/55 p-3 text-[11.5px] leading-relaxed text-dim">
-                              <div>
-                                <span className="font-mono font-semibold text-ice">深度解析：</span>
-                                {q.explanation}
-                              </div>
-                              {q.ba2Tip && (
-                                <div className="font-mono text-[11px] text-gold">
-                                  BA II Plus 按键：{q.ba2Tip}
-                                </div>
-                              )}
-                            </div>
-                          )}
+                          {submitted && <QuestionAnalysisBlock question={q} />}
                         </div>
                       )
                     })}
@@ -1152,11 +1236,14 @@ export function CfaWorkbenchPage({ settings, onOpenSettings }: CfaWorkbenchPageP
             </div>
           ) : (
             <>
-              <div className="rounded-lg border border-line bg-void/50 px-3 py-2 font-mono text-[11px] text-dim">
-                当前允许出题范围（{wb.completedUnits.length} 节已完成）：
-                <span className="ml-1 text-ink">
-                  {wb.completedUnits.map((u) => u.code).join(' · ')}
-                </span>
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-void/50 px-3 py-2">
+                <div className="font-mono text-[11px] text-dim">
+                  当前允许出题范围（{wb.completedUnits.length} 节已完成）：
+                  <span className="ml-1 text-ink">
+                    {wb.completedUnits.map((u) => u.code).join(' · ')}
+                  </span>
+                </div>
+                <QuestionModeSwitch value={wb.questionMode} onChange={wb.setQuestionMode} />
               </div>
 
               {drillError && (
@@ -1214,24 +1301,21 @@ export function CfaWorkbenchPage({ settings, onOpenSettings }: CfaWorkbenchPageP
                   </div>
 
                   {drillChoice !== null && (
-                    <div className="space-y-2 rounded-lg border border-line bg-void/65 p-3.5 text-[12px]">
+                    <div className="space-y-2.5">
                       <div
                         className={cn(
-                          'font-mono font-semibold',
-                          drillChoice === drillQuestion.answer ? 'text-bull' : 'text-bear',
+                          'rounded-lg border px-3.5 py-2 font-mono text-[12px] font-semibold',
+                          drillChoice === drillQuestion.answer
+                            ? 'border-bull/50 bg-bull/10 text-bull'
+                            : 'border-bear/50 bg-bear/10 text-bear',
                         )}
                       >
                         {drillChoice === drillQuestion.answer
                           ? `回答正确！正确答案：${drillQuestion.answer}`
                           : `回答有误（你选了 ${drillChoice}，正确为 ${drillQuestion.answer}）· 已自动收入「错题本」`}
                       </div>
-                      <p className="leading-relaxed text-dim">{drillQuestion.explanation}</p>
-                      {drillQuestion.ba2Tip && (
-                        <div className="font-mono text-[11px] text-gold">
-                          BA II Plus 按键：{drillQuestion.ba2Tip}
-                        </div>
-                      )}
-                      <div className="pt-1">
+                      <QuestionAnalysisBlock question={drillQuestion} />
+                      <div>
                         <button
                           type="button"
                           onClick={() => void handleNextDrillQuestion()}
@@ -1386,21 +1470,7 @@ export function CfaWorkbenchPage({ settings, onOpenSettings }: CfaWorkbenchPageP
                       })}
                     </div>
 
-                    {showAnswer && (
-                      <div className="space-y-1 rounded-lg border border-line bg-void/55 p-3 text-[11.5px] text-dim">
-                        <div>
-                          <span className="font-mono font-semibold text-bull">
-                            正确答案：{m.question.answer} ·{' '}
-                          </span>
-                          {m.question.explanation}
-                        </div>
-                        {m.question.ba2Tip && (
-                          <div className="font-mono text-[11px] text-gold">
-                            BA II Plus：{m.question.ba2Tip}
-                          </div>
-                        )}
-                      </div>
-                    )}
+                    {showAnswer && <QuestionAnalysisBlock question={m.question} />}
                   </div>
                 )
               })}

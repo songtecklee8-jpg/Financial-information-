@@ -893,6 +893,8 @@ export interface CfaQaMessage {
   relay?: RelayMeta
 }
 
+export type CfaQuestionMode = 'mixed' | 'calculation' | 'conceptual'
+
 export interface CfaQuestion {
   id: string
   unitId: string
@@ -906,6 +908,8 @@ export interface CfaQuestion {
   }
   answer: 'A' | 'B' | 'C'
   explanation: string
+  distractorAnalysis?: Partial<Record<'A' | 'B' | 'C', string>>
+  examTrap?: string
   ba2Tip?: string
   kind: 'conceptual' | 'calculation'
 }
