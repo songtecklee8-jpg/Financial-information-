@@ -13,6 +13,7 @@ import type {
   NewsImpact,
   PaperProfile,
   ProfileStats,
+  RelayMeta,
   TradeReview,
   Verdict,
 } from '@/types'
@@ -26,15 +27,18 @@ import {
 } from '@/lib/aiContext'
 import { ASSET_KEYS, assetLabel, localNewsImpact } from '@/lib/newsImpact'
 import {
+  BATON_META,
   callBackupProvidersClient,
-  enterGeminiClientSlot,
+  callRelayViaServerProxy,
+  canTryServerProxy,
+  collectClientGeminiKeys,
   formatBackupModelDisplay,
+  getActiveAiFallbackConfig,
+  hasAnyServerEnvAi,
   hasConfiguredBackupAi,
-  isClientProviderCoolingDown,
-  leaveGeminiClientSlot,
+  inferRelayFromModel,
   recordClientProviderFailure,
   recordClientProviderSuccess,
-  shouldOffloadClientGemini,
   type ClientAiTier,
 } from '@/lib/aiFallback'
 import { RESEARCH_DOCTRINE } from '@/lib/researchDoctrine'
@@ -138,9 +142,13 @@ export function modelDisplayName(model: string): string {
   if (
     value.startsWith('groq/') ||
     value.startsWith('openrouter/') ||
-    value.startsWith('mistral/') ||
+    value.startsWith('cerebras/') ||
+    value.startsWith('nvidia/') ||
     value.startsWith('cloudflare/') ||
-    value.startsWith('nvidia/')
+    value.startsWith('mistral/') ||
+    value.startsWith('cohere/') ||
+    value.startsWith('custom1/') ||
+    value.startsWith('custom2/')
   ) {
     return formatBackupModelDisplay(raw)
   }
@@ -299,102 +307,149 @@ function toBackupMessages(
 }
 
 /**
- * 按候选链顺序尝试 Gemini 模型：高层级限流（429）/ 不可用（404）/ 网络异常时，
- * 自动无缝降级到下一级模型。
+ * 第 1 棒（Google Gemini）：按多把 Key 内部轮询并结合模型降级链依次尝试。
  */
 async function callGeminiWithFallback(
   options: GenerateOptions,
+  geminiKeys: string[],
   chain: string[],
   allowKeyFallback: boolean,
-): Promise<{ text: string; model: string }> {
+): Promise<{ text: string; model: string; relay: RelayMeta }> {
   let lastError: unknown
-  enterGeminiClientSlot()
-  try {
+  for (const key of geminiKeys) {
     for (const model of chain) {
       try {
-        const text = await callModel(options, model)
+        const text = await callModel({ ...options, apiKey: key }, model)
         recordClientProviderSuccess('gemini')
-        return { text, model }
+        return {
+          text,
+          model,
+          relay: {
+            baton: BATON_META.gemini.baton,
+            providerId: 'gemini',
+            providerName: BATON_META.gemini.name,
+            model,
+          },
+        }
       } catch (error) {
         lastError = error
         if (options.signal?.aborted) throw error
         const status = error instanceof GeminiError ? error.code : undefined
         const msg = error instanceof Error ? error.message : String(error)
         recordClientProviderFailure('gemini', status, msg)
-        // 仅当没有备用引擎时对无效 Key 立即终止；有备用引擎时留待备用接管
-        if (!allowKeyFallback && isFatalKeyError(error)) throw error
+        // 当前 Gemini Key 限流或无效时，切换下一把 Gemini Key
+        if (status === 429 || (!allowKeyFallback && isFatalKeyError(error)) || isFatalKeyError(error)) {
+          break
+        }
       }
     }
-  } finally {
-    leaveGeminiClientSlot()
   }
   throw lastError instanceof Error ? lastError : new GeminiError('Gemini 请求失败')
 }
 
 /**
- * 调用 AI（Gemini 优先并保留完整三级降级链；仅在 Gemini 限额/报错/未配置 Key/高并发时自动切换免费备用服务商）。
- * 返回实际命中的模型 id，供分析卡片显示「Powered by …」角标。
+ * 统一 AI “接力赛”调用入口：
+ * 1) 优先经同源 `/api/ai/complete` 代理（合并 Vercel 环境变量与本地 Key，严防秘密泄露，支持第 1→10 棒接力）；
+ * 2) 若处于纯静态部署（后端接口不可达），自动回落浏览器端严格第 1→10 棒接力（Gemini 多 Key 轮询 → Groq → OpenRouter → Cerebras → NVIDIA → Cloudflare → Mistral → Cohere → 自定义 1/2）。
  */
-export async function generateText(options: GenerateOptions): Promise<{ text: string; model: string }> {
-  const hasGemini = Boolean(options.apiKey?.trim())
-  const backupsReady = hasConfiguredBackupAi()
+export async function generateText(
+  options: GenerateOptions,
+): Promise<{ text: string; model: string; relay: RelayMeta }> {
   const tier: ClientAiTier = resolveStartTier(options.route)
+  const fallbackConfig = getActiveAiFallbackConfig()
+  const geminiKeys = collectClientGeminiKeys({
+    geminiKey: options.apiKey,
+    aiFallback: fallbackConfig,
+  })
+  const hasGemini = geminiKeys.length > 0
+  const backupsReady = hasConfiguredBackupAi(fallbackConfig)
+  const serverAiReady = hasAnyServerEnvAi()
+
+  if (!hasGemini && !backupsReady && !serverAiReady && !canTryServerProxy()) {
+    throw new GeminiError(
+      '未配置任何 AI 接力赛密钥',
+      undefined,
+      '请点击右上角「API 接力赛配置」填入 Gemini Key 或第 2–10 棒任一备用通道密钥',
+    )
+  }
+
+  // 1) 优先走后端统一接力代理（兼顾 Vercel 环境变量、防 CORS、不泄露密钥）
+  if (canTryServerProxy()) {
+    try {
+      return await callRelayViaServerProxy({
+        geminiKey: options.apiKey,
+        aiRouting: options.route.mode,
+        customModel: options.route.override,
+        system: options.systemInstruction ?? '',
+        messages: toBackupMessages(options.contents),
+        tier,
+        temperature: options.temperature,
+        maxOutputTokens: options.maxOutputTokens,
+        expectJson: Boolean(options.jsonSchema),
+        responseSchema: options.jsonSchema,
+        signal: options.signal,
+        config: fallbackConfig,
+      })
+    } catch (proxyErr) {
+      if (options.signal?.aborted) throw proxyErr
+      const msg = proxyErr instanceof Error ? proxyErr.message : String(proxyErr)
+      const isProxyUnavailable =
+        msg.startsWith('PROXY_UNAVAILABLE_') || proxyErr instanceof TypeError
+      if (!isProxyUnavailable) {
+        // 如果服务端明确报告均失败，在确认本地有额外直连配置时仍可不做重复浪费，直接抛出明确错误
+        throw new GeminiError(msg)
+      }
+    }
+  }
 
   if (!hasGemini && !backupsReady) {
     throw new GeminiError(
       '未配置 Gemini 或免费备用 AI Key',
       undefined,
-      '请点击右上角「API 设置」填入 Gemini Key 或任一免费备用服务商 Key',
+      '请点击右上角「API 接力赛配置」填入 Gemini Key 或任一备用接力通道 Key',
     )
   }
 
-  const runBackup = (rotate: boolean) =>
-    callBackupProvidersClient({
-      system: options.systemInstruction ?? '',
-      messages: toBackupMessages(options.contents),
-      tier,
-      temperature: options.temperature,
-      maxOutputTokens: options.maxOutputTokens,
-      expectJson: Boolean(options.jsonSchema),
-      signal: options.signal,
-      rotate,
-    })
-
   const chain = modelChain(options.route)
-  const offloadForConcurrency = Boolean(
-    options.allowConcurrencyOffload && shouldOffloadClientGemini(),
-  )
 
-  // 1) 主路径：有 Gemini Key 且（无备用，或 Gemini 未冷却且未触发并发分流）→ 严格优先走 Gemini
-  if (hasGemini && (!backupsReady || (!isClientProviderCoolingDown('gemini') && !offloadForConcurrency))) {
+  // 2) 第 1 棒：Google Gemini（多 Key 内部轮询）
+  if (hasGemini) {
     try {
-      return await callGeminiWithFallback(options, chain, backupsReady)
-    } catch (error) {
-      if (options.signal?.aborted || !backupsReady) throw error
-      return await runBackup(true)
+      return await callGeminiWithFallback(options, geminiKeys, chain, backupsReady)
+    } catch (geminiError) {
+      if (options.signal?.aborted || !backupsReady) throw geminiError
     }
   }
 
-  // 2) 未配置 Gemini、Gemini 处于冷却、或并发已满分流：使用永久免费备用服务商
-  if (backupsReady) {
-    try {
-      return await runBackup(offloadForConcurrency)
-    } catch (backupErr) {
-      if (options.signal?.aborted || !hasGemini) throw backupErr
-      // 若并发分流到备用后意外失败，仍可再尝试一次 Gemini
-      return await callGeminiWithFallback(options, chain, false)
-    }
-  }
-
-  return await callGeminiWithFallback(options, chain, false)
+  // 3) 第 2–10 棒接力（Groq → OpenRouter → Cerebras → NVIDIA → Cloudflare → Mistral → Cohere → 自定义 1/2）
+  return await callBackupProvidersClient({
+    system: options.systemInstruction ?? '',
+    messages: toBackupMessages(options.contents),
+    tier,
+    temperature: options.temperature,
+    maxOutputTokens: options.maxOutputTokens,
+    expectJson: Boolean(options.jsonSchema),
+    signal: options.signal,
+    config: fallbackConfig,
+  })
 }
 
-function parseJsonBlock<T>(text: string): T {
-  const cleaned = text
+export function parseJsonBlock<T>(text: string): T {
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text)
+  const candidate = (fenced ? fenced[1] : text)
     .replace(/^\s*```(?:json)?/i, '')
     .replace(/```\s*$/, '')
     .trim()
-  return JSON.parse(cleaned) as T
+  try {
+    return JSON.parse(candidate) as T
+  } catch {
+    const start = candidate.search(/[[{]/)
+    const end = Math.max(candidate.lastIndexOf('}'), candidate.lastIndexOf(']'))
+    if (start >= 0 && end > start) {
+      return JSON.parse(candidate.slice(start, end + 1)) as T
+    }
+    throw new SyntaxError('无法从模型输出中解析合法 JSON')
+  }
 }
 
 function normalizeVerdict(value: unknown): Verdict {
@@ -546,7 +601,8 @@ export async function translateArticles(
   signal?: AbortSignal,
 ): Promise<{ articles: NewsArticle[]; model: string | null }> {
   const pending = articles.filter((article) => article.lang === 'en' && article.translation !== 'done')
-  if ((!apiKey?.trim() && !hasConfiguredBackupAi()) || pending.length === 0) {
+  const anyAi = Boolean(apiKey?.trim()) || hasConfiguredBackupAi() || hasAnyServerEnvAi()
+  if (!anyAi || pending.length === 0) {
     return { articles, model: null }
   }
 
@@ -778,7 +834,7 @@ export async function runNewsImpact(
   route: AiRoute,
   signal?: AbortSignal,
 ): Promise<NewsImpact> {
-  if (!apiKey?.trim() && !hasConfiguredBackupAi()) return localNewsImpact(article)
+  if (!apiKey?.trim() && !hasConfiguredBackupAi() && !hasAnyServerEnvAi()) return localNewsImpact(article)
   try {
     const { text, model: usedModel } = await generateText({
       apiKey,
@@ -926,7 +982,7 @@ export async function runNewsDetailClient(
 ): Promise<NewsDetail> {
   const fallback = localNewsImpact(article)
   const body = (fullText || article.summary || article.title).slice(0, 10_000)
-  if (!apiKey?.trim() && !hasConfiguredBackupAi()) {
+  if (!apiKey?.trim() && !hasConfiguredBackupAi() && !hasAnyServerEnvAi()) {
     return {
       id: article.id,
       url: article.url,
@@ -1139,5 +1195,5 @@ export async function runMacroCycleAnalysis(
   }
 }
 
-export { localVerdict }
+export { inferRelayFromModel, localVerdict }
 

@@ -1,18 +1,26 @@
 /**
- * APEX Terminal — 服务端环境变量读取。
+ * APEX Research — 服务端环境变量读取。
  *
- * 所有 API Key 一律从 Vercel 环境变量读取，严禁在源码中硬编码。
- * 本地开发时可通过 `.env` 或 `vercel dev` 注入同样的变量名。
+ * 所有 API Key 一律优先从 Vercel / Node 服务端环境变量读取，严禁在源码中硬编码。
  */
 
 export interface ServerKeys {
   gemini: string
+  geminiKeys: string[]
   groq: string
   openrouter: string
-  mistral: string
+  cerebras: string
+  nvidia: string
   cloudflareAccountId: string
   cloudflareApiToken: string
-  nvidia: string
+  mistral: string
+  cohere: string
+  custom1Url: string
+  custom1Key: string
+  custom1Model: string
+  custom2Url: string
+  custom2Key: string
+  custom2Model: string
   finnhub: string
   alpacaKey: string
   alpacaSecret: string
@@ -37,15 +45,41 @@ function read(...names: string[]): string {
   return ''
 }
 
+function collectUnique(...values: string[]): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const raw of values) {
+    const val = raw.trim()
+    if (!val || seen.has(val)) continue
+    seen.add(val)
+    out.push(val)
+  }
+  return out
+}
+
 export function loadKeys(): ServerKeys {
+  const g1 = read('GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY')
+  const g2 = read('GEMINI_API_KEY_2')
+  const g3 = read('GEMINI_API_KEY_3')
+  const geminiKeys = collectUnique(g1, g2, g3)
+
   return {
-    gemini: read('GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY'),
+    gemini: geminiKeys[0] ?? '',
+    geminiKeys,
     groq: read('GROQ_API_KEY'),
     openrouter: read('OPENROUTER_API_KEY'),
-    mistral: read('MISTRAL_API_KEY'),
+    cerebras: read('CEREBRAS_API_KEY'),
+    nvidia: read('NVIDIA_API_KEY', 'NVIDIA_NIM_API_KEY'),
     cloudflareAccountId: read('CLOUDFLARE_ACCOUNT_ID', 'CF_ACCOUNT_ID'),
     cloudflareApiToken: read('CLOUDFLARE_API_TOKEN', 'CF_API_TOKEN'),
-    nvidia: read('NVIDIA_API_KEY', 'NVIDIA_NIM_API_KEY'),
+    mistral: read('MISTRAL_API_KEY'),
+    cohere: read('COHERE_API_KEY'),
+    custom1Url: read('CUSTOM_OPENAI_1_URL'),
+    custom1Key: read('CUSTOM_OPENAI_1_KEY'),
+    custom1Model: read('CUSTOM_OPENAI_1_MODEL'),
+    custom2Url: read('CUSTOM_OPENAI_2_URL'),
+    custom2Key: read('CUSTOM_OPENAI_2_KEY'),
+    custom2Model: read('CUSTOM_OPENAI_2_MODEL'),
     finnhub: read('FINNHUB_API_KEY'),
     alpacaKey: read('ALPACA_API_KEY', 'ALPACA_API_KEY_ID', 'APCA_API_KEY_ID'),
     alpacaSecret: read(

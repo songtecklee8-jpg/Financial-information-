@@ -15,10 +15,10 @@ import {
 import type { ApiSettings, AssetImpact, AssetKey, ImpactDirection, NewsArticle, NewsImpact } from '@/types'
 import { Modal } from '@/components/ui/Modal'
 import { Badge } from '@/components/ui/Badge'
-import { hasAnyAiConfigured } from '@/lib/aiFallback'
+import { formatRelayBadge, hasAnyAiConfigured } from '@/lib/aiFallback'
 import { cn } from '@/lib/cn'
 import { formatRelativeTime } from '@/lib/format'
-import { aiRoute, modelDisplayName, runNewsImpact } from '@/lib/gemini'
+import { aiRoute, runNewsImpact } from '@/lib/gemini'
 
 interface NewsImpactPanelProps {
   article: NewsArticle
@@ -157,7 +157,7 @@ export function NewsImpactPanel({ article, settings, onClose }: NewsImpactPanelP
             )}
             {impact && (
               <span title={`实际执行模型：${impact.model}`}>
-                Powered by {modelDisplayName(impact.model)}
+                {formatRelayBadge(impact.model)}
               </span>
             )}
             {impact && <span>置信度 {impact.confidence}%</span>}

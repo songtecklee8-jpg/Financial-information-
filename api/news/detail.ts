@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 import { buildNewsDetail } from '../_lib/ai.js'
-import { mergeBackupKeys } from '../_lib/aiProviders.js'
+import { collectMergedGeminiKeys, mergeBackupKeys } from '../_lib/aiProviders.js'
 import { loadKeys } from '../_lib/env.js'
 import { extractArticle } from '../_lib/extract.js'
 import { SERVER_FLASH_MODEL, SERVER_LITE_MODEL, SERVER_PRO_MODEL } from '../_lib/geminiServer.js'
@@ -126,7 +126,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   const keys = loadKeys()
 
-  const geminiKey = pick('geminiKey') || keys.gemini
+  const geminiKeys = collectMergedGeminiKeys(keys, body.aiFallback, pick('geminiKey'))
+  const geminiKey = geminiKeys[0] ?? ''
   const backupKeys = mergeBackupKeys(keys, body.aiFallback)
 
   // 1) 抓取正文并清洗（失败则回落到 RSS 导语）
@@ -140,6 +141,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       article,
       fullText,
       apiKey: geminiKey,
+      apiKeys: geminiKeys,
       model: requestedModel,
       backupKeys,
     })

@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { Brain, FileText, LoaderCircle, Sparkles, Copy, Check, ShieldAlert } from 'lucide-react'
 
-import type { ApiSettings } from '@/types'
+import type { ApiSettings, RelayMeta } from '@/types'
 import { generateText, aiRoute } from '@/lib/gemini'
-import { formatBackupModelDisplay } from '@/lib/aiFallback'
+import { formatRelayBadge } from '@/lib/aiFallback'
 
 interface EarningsAnalysisWorkspaceProps {
   settings: ApiSettings
@@ -27,7 +27,7 @@ export function EarningsAnalysisWorkspace({ settings, onOpenSettings }: Earnings
   const [company, setCompany] = useState('Apple Inc. (AAPL)')
   const [text, setText] = useState(SAMPLE_REPORTS[0]!.text)
   const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState<{ report: string; model: string } | null>(null)
+  const [result, setResult] = useState<{ report: string; relay: RelayMeta } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
@@ -59,10 +59,10 @@ export function EarningsAnalysisWorkspace({ settings, onOpenSettings }: Earnings
       })
       setResult({
         report: res.text,
-        model: formatBackupModelDisplay(res.model),
+        relay: res.relay,
       })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'AI 分析失败，请检查 API Key 配置')
+      setError(err instanceof Error ? err.message : 'AI 分析失败，请检查 API 接力赛配置')
     } finally {
       setLoading(false)
     }
@@ -184,7 +184,7 @@ export function EarningsAnalysisWorkspace({ settings, onOpenSettings }: Earnings
                 {result && (
                   <div className="flex items-center gap-2">
                     <span className="rounded border border-gold/30 bg-gold/10 px-2 py-0.5 font-mono text-[10px] text-gold">
-                      {result.model}
+                      {formatRelayBadge(result.relay)}
                     </span>
                     <button
                       type="button"

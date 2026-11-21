@@ -181,17 +181,73 @@ export interface ChatMessage {
  */
 export type AiRoutingMode = 'auto' | 'pro' | 'flash' | 'lite'
 
-export type AiFallbackProviderId = 'groq' | 'openrouter' | 'mistral' | 'cloudflare' | 'nvidia'
+export type AiFallbackProviderId =
+  | 'groq'
+  | 'openrouter'
+  | 'cerebras'
+  | 'nvidia'
+  | 'cloudflare'
+  | 'mistral'
+  | 'cohere'
+  | 'custom1'
+  | 'custom2'
+
+export type AllAiProviderId = 'gemini' | AiFallbackProviderId
+
+export interface RelayMeta {
+  baton: number
+  providerId: AllAiProviderId
+  providerName: string
+  model: string
+}
+
+export interface ServerEnvStatus {
+  gemini1: boolean
+  gemini2: boolean
+  gemini3: boolean
+  geminiCount: number
+  groq: boolean
+  openrouter: boolean
+  cerebras: boolean
+  nvidia: boolean
+  cloudflare: boolean
+  mistral: boolean
+  cohere: boolean
+  custom1: boolean
+  custom2: boolean
+  newsdata: boolean
+  finnhub: boolean
+}
 
 export interface AiFallbackConfig {
-  /** 仅在 Gemini 限额 / 不可用 / 未配置 / 多任务并发排队时启用免费备用服务商 */
+  /** 是否开启第 2–10 棒接力赛容错（开启后第 1 棒 Gemini 异常时自动依次接力） */
   enabled: boolean
+  /** 多 Gemini Key 内部轮询备用槽位 2 & 3（与主 geminiKey 同属第 1 棒） */
+  geminiKey2: string
+  geminiKey3: string
+  /** 第 2 棒：Groq */
   groqKey: string
+  /** 第 3 棒：OpenRouter */
   openrouterKey: string
-  mistralKey: string
+  /** 第 4 棒：Cerebras */
+  cerebrasKey: string
+  /** 第 5 棒：NVIDIA NIM */
+  nvidiaKey: string
+  /** 第 6 棒：Cloudflare Workers AI */
   cloudflareAccountId: string
   cloudflareApiToken: string
-  nvidiaKey: string
+  /** 第 7 棒：Mistral */
+  mistralKey: string
+  /** 第 8 棒：Cohere */
+  cohereKey: string
+  /** 第 9 棒：自定义 OpenAI 兼容槽位 1 */
+  custom1Url: string
+  custom1Key: string
+  custom1Model: string
+  /** 第 10 棒：自定义 OpenAI 兼容槽位 2 */
+  custom2Url: string
+  custom2Key: string
+  custom2Model: string
 }
 
 export interface ApiSettings {
@@ -200,11 +256,11 @@ export interface ApiSettings {
   geminiModel: string
   /** AI 模型路由模式 */
   aiRouting: AiRoutingMode
-  /** 永久免费多服务商兜底与并发分流配置 */
+  /** 多免费 API 接力赛配置 */
   aiFallback?: AiFallbackConfig
   /** NewsData.io 财经新闻 API Key */
   newsDataKey?: string
-  /** 各行情引擎的密钥配置（Key + Secret） */
+  /** 保留兼容：Finnhub 等接口凭证 */
   providers: Record<ProviderId, ProviderConfig>
 }
 
@@ -772,4 +828,111 @@ export interface BondsPayload {
   updatedAt: string
   model?: string
 }
+
+// ---------------------------------------------------------------------------
+// CFA Level 1 (2027 考纲) 备考工作台
+// ---------------------------------------------------------------------------
+
+export type CfaTopicId =
+  | 'ethics'
+  | 'quant'
+  | 'econ'
+  | 'fsa'
+  | 'corp'
+  | 'equity'
+  | 'fi'
+  | 'deriv'
+  | 'alt'
+  | 'pm'
+
+export type CfaUnitStatus = 'not_started' | 'in_progress' | 'completed'
+
+export interface CfaUnit {
+  id: string
+  topicId: CfaTopicId
+  code: string
+  title: string
+  rawText: string
+  sourceName: string
+  status: CfaUnitStatus
+  order: number
+  lastVisitedAt?: string
+  completedAt?: string
+  lastQuizScore?: number
+  lastQuizTotal?: number
+}
+
+export interface CfaLectureNote {
+  unitId: string
+  coreConcepts: Array<{
+    termEn: string
+    termZh: string
+    plainExplanation: string
+    example: string
+  }>
+  formulasAndCalculator: Array<{
+    name: string
+    formula: string
+    variables: string
+    ba2PlusSteps: string
+  }>
+  examFocus2027: Array<{
+    point: string
+    trap: string
+  }>
+  summaryTakeaway: string
+  generatedAt: string
+  relay?: RelayMeta
+}
+
+export interface CfaQaMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  createdAt: string
+  relay?: RelayMeta
+}
+
+export interface CfaQuestion {
+  id: string
+  unitId: string
+  unitTitle: string
+  topicId: CfaTopicId
+  stem: string
+  options: {
+    A: string
+    B: string
+    C: string
+  }
+  answer: 'A' | 'B' | 'C'
+  explanation: string
+  ba2Tip?: string
+  kind: 'conceptual' | 'calculation'
+}
+
+export interface CfaQuizAttempt {
+  unitId: string
+  questions: CfaQuestion[]
+  answers: Record<string, 'A' | 'B' | 'C'>
+  submitted: boolean
+  score: number
+  total: number
+  passed: boolean
+  relay?: RelayMeta
+  createdAt: string
+}
+
+export interface CfaMistakeRecord {
+  id: string
+  unitId: string
+  unitTitle: string
+  topicId: CfaTopicId
+  question: CfaQuestion
+  userChoice: 'A' | 'B' | 'C'
+  source: 'unit_quiz' | 'infinite_drill'
+  createdAt: string
+  mastered: boolean
+  reviewCount: number
+}
+
 

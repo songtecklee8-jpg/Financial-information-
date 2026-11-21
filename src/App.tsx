@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 
 import { ApiSettingsModal } from '@/components/ApiSettingsModal'
+import { CfaWorkbenchPage } from '@/components/cfa/CfaWorkbenchPage'
 import { NewsHubPage } from '@/components/news/NewsHubPage'
 import { EarningsAnalysisWorkspace } from '@/components/analysis/EarningsAnalysisWorkspace'
 import { TopBar, type AppView } from '@/components/TopBar'
@@ -23,17 +24,20 @@ export default function App() {
           view={view}
           onNavigate={setView}
           hasGemini={api.hasGemini}
+          geminiCount={api.geminiCount}
           backupAiCount={api.backupAiCount}
         />
 
         {view === 'news' ? (
           <NewsHubPage settings={api.settings} symbol="" onOpenSettings={openSettings} />
-        ) : (
+        ) : view === 'analysis' ? (
           <EarningsAnalysisWorkspace settings={api.settings} onOpenSettings={openSettings} />
+        ) : (
+          <CfaWorkbenchPage settings={api.settings} onOpenSettings={openSettings} />
         )}
 
         <footer className="mt-auto border-t border-line/60 py-3 px-4 text-center font-mono text-[10px] text-faint">
-          APEX RESEARCH · 轻量级 AI 投研助手 · 多源财经新闻智能摘要与财报长文深度分析工作台
+          APEX RESEARCH · 多免费 API 接力投研与 CFA L1 2027 备考工作台
         </footer>
       </div>
 
@@ -41,6 +45,8 @@ export default function App() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         settings={api.settings}
+        serverEnv={api.serverEnv}
+        onRefreshServerEnv={api.refreshServerEnv}
         onSave={api.save}
         onReset={api.reset}
       />

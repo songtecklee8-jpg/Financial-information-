@@ -107,7 +107,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     addedCount = fresh.length
 
     const pending = fresh.filter((item) => item.lang === 'en').slice(0, MAX_ENRICH_PER_RUN)
-    const enriched = await enrichArticles(pending, keys.gemini, backupKeys)
+    const enriched = await enrichArticles(pending, keys.gemini, backupKeys, keys.geminiKeys)
     newsModel = enriched.model ?? existing?.model
 
     // 合并并按 URL + 标题相似度智能去重，保留最新 200 条

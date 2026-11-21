@@ -11,6 +11,7 @@ import cronSyncHandler from './api/cron/sync.js'
 import earningsHandler from './api/earnings.js'
 import earningsDetailHandler from './api/earnings/detail.js'
 import newsDetailHandler from './api/news/detail.js'
+import newsSearchHandler from './api/news/search.js'
 import snapshotHandler from './api/snapshot.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -41,6 +42,7 @@ async function startServer() {
 
   app.all('/api/snapshot', adapt(snapshotHandler))
   app.all('/api/news/detail', adapt(newsDetailHandler))
+  app.all('/api/news/search', adapt(newsSearchHandler))
   app.all('/api/cron/sync', adapt(cronSyncHandler))
   app.all('/api/earnings', adapt(earningsHandler))
   app.all('/api/earnings/detail', adapt(earningsDetailHandler))

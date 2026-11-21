@@ -1,71 +1,91 @@
 /**
- * APEX Terminal — 服务端 AI 统一路由与兜底引擎。
+ * APEX Research — 服务端 AI 统一“接力赛”自动容错引擎。
  *
- * 1. 保持 Gemini 为绝对主力（Pro → Flash → Flash-Lite → gemini-flash-latest 原有降级链不变）。
- * 2. 仅当 Gemini 触发 429 限流 / 配额耗尽 / 超时报错 / 未配置 Key，或在多任务高并发排队时，
- *    自动由已配置的永久免费备用服务商（Groq / OpenRouter / Mistral / Cloudflare / NVIDIA）接力顶上，
- *    并在单家连续失败时做临时冷却熔断。
+ * 严格接力顺序（第 1 棒 → 第 10 棒）：
+ * - 第 1 棒：Google Gemini（优先 gemini-2.5-flash / gemini-2.5-pro，支持多把 Gemini Key 内部轮询）
+ * - 第 2 棒：Groq
+ * - 第 3 棒：OpenRouter
+ * - 第 4 棒：Cerebras
+ * - 第 5 棒：NVIDIA NIM
+ * - 第 6 棒：Cloudflare Workers AI
+ * - 第 7 棒：Mistral
+ * - 第 8 棒：Cohere
+ * - 第 9 棒：自定义 OpenAI 兼容槽位 1
+ * - 第 10 棒：自定义 OpenAI 兼容槽位 2
  */
 
 import {
+  type AllAiProviderId,
+  BATON_META,
   type ServerAiBackupKeys,
   callBackupProvidersServer,
   enterGeminiSlot,
   hasConfiguredBackup,
   inferTierFromModel,
-  isProviderCoolingDown,
   leaveGeminiSlot,
   recordProviderFailure,
   recordProviderSuccess,
-  shouldOffloadGemini,
 } from './aiProviders.js'
 
 const API_ROOT = 'https://generativelanguage.googleapis.com/v1beta/models'
 
-/** 后台默认使用的轻量模型（高频批量任务） */
 export const SERVER_LITE_MODEL = 'gemini-2.5-flash-lite'
-
-/** 交互研判用的均衡模型（单篇深度摘要 / 推演） */
 export const SERVER_FLASH_MODEL = 'gemini-2.5-flash'
-
-/** 深度推理模型 */
 export const SERVER_PRO_MODEL = 'gemini-2.5-pro'
-
 const LAST_RESORT_MODEL = 'gemini-flash-latest'
 
-const TIMEOUT_MS = 45_000
+const TIMEOUT_MS = 38_000
 
 export interface GenerateServerOptions {
-  apiKey: string
+  /** 主 Gemini Key（兼容旧调用方） */
+  apiKey?: string
+  /** 多把 Gemini Key 列表，在 Gemini 第 1 棒内部依次轮询 */
+  apiKeys?: string[]
   /** 目标模型（失败后按 chain 自动降级） */
   model?: string
   /** 完整降级链；不传则由 model 派生 */
   chain?: string[]
   system: string
   prompt: string
+  /** 可选多轮对话历史 */
+  messages?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
   temperature?: number
   maxOutputTokens?: number
   responseSchema?: unknown
-  /** 可选永久免费备用服务商凭证与开关 */
+  /** 第 2-10 棒备用通道凭证 */
   backupKeys?: ServerAiBackupKeys
-  /** 批量/并发场景下当 Gemini 并发已满时允许把后续子任务分流到健康备用引擎 */
   allowConcurrencyOffload?: boolean
 }
 
 export interface ServerGeneration {
   text: string
   model: string
+  provider: AllAiProviderId
+  providerName: string
+  baton: number
 }
 
 function deriveChain(model: string): string[] {
-  const chain = [model]
-  if (model.includes('2.5-pro')) chain.push(SERVER_FLASH_MODEL, SERVER_LITE_MODEL)
-  else if (model.includes('2.5-flash') && !model.includes('lite')) chain.push(SERVER_LITE_MODEL)
-  chain.push(LAST_RESORT_MODEL)
-  return Array.from(new Set(chain))
+  const chain: string[] = []
+  const push = (m: string) => {
+    if (m && !chain.includes(m)) chain.push(m)
+  }
+  push(model)
+  if (model.includes('2.5-pro')) {
+    push(SERVER_FLASH_MODEL)
+    push(SERVER_LITE_MODEL)
+  } else if (model.includes('2.5-flash') && !model.includes('lite')) {
+    push(SERVER_PRO_MODEL)
+    push(SERVER_LITE_MODEL)
+  } else {
+    push(SERVER_FLASH_MODEL)
+    push(SERVER_PRO_MODEL)
+  }
+  push(LAST_RESORT_MODEL)
+  return chain
 }
 
-/** 从模型返回的文本中稳健地抽出 JSON（兼容 ```json 围栏与前后缀说明） */
+/** 从模型返回的文本中稳健地抽出 JSON */
 export function parseJsonLoose<T>(text: string): T | null {
   if (!text) return null
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text)
@@ -86,15 +106,26 @@ export function parseJsonLoose<T>(text: string): T | null {
   }
 }
 
-async function callModel(
+async function callGeminiModelWithKey(
   options: GenerateServerOptions,
+  geminiKey: string,
   model: string,
 ): Promise<ServerGeneration> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
-  const body = {
-    systemInstruction: { parts: [{ text: options.system }] },
-    contents: [{ role: 'user', parts: [{ text: options.prompt }] }],
+  const contents =
+    options.messages && options.messages.length > 0
+      ? options.messages
+          .filter((m) => m.role !== 'system')
+          .map((m) => ({
+            role: m.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: m.content }],
+          }))
+      : [{ role: 'user', parts: [{ text: options.prompt }] }]
+
+  const body: Record<string, unknown> = {
+    ...(options.system ? { systemInstruction: { parts: [{ text: options.system }] } } : {}),
+    contents,
     generationConfig: {
       temperature: options.temperature ?? 0.35,
       maxOutputTokens: options.maxOutputTokens ?? 4096,
@@ -105,7 +136,7 @@ async function callModel(
   }
   try {
     const response = await fetch(
-      `${API_ROOT}/${model}:generateContent?key=${encodeURIComponent(options.apiKey)}`,
+      `${API_ROOT}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(geminiKey)}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -115,7 +146,7 @@ async function callModel(
     )
     if (!response.ok) {
       const detail = await response.text().catch(() => '')
-      const error = new Error(`Gemini HTTP ${response.status} ${detail.slice(0, 160)}`)
+      const error = new Error(`Gemini HTTP ${response.status} ${detail.slice(0, 180)}`)
       ;(error as Error & { status?: number }).status = response.status
       throw error
     }
@@ -124,88 +155,129 @@ async function callModel(
     }
     const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text ?? '').join('') ?? ''
     if (!text.trim()) throw new Error('Gemini 返回空结果')
-    return { text, model }
+    return {
+      text,
+      model,
+      provider: 'gemini',
+      providerName: BATON_META.gemini.name,
+      baton: BATON_META.gemini.baton,
+    }
   } finally {
     clearTimeout(timer)
   }
 }
 
-async function callGeminiChain(options: GenerateServerOptions): Promise<ServerGeneration> {
-  const chain = options.chain ?? deriveChain(options.model ?? SERVER_LITE_MODEL)
+function collectKeyList(options: GenerateServerOptions): string[] {
+  const raw = [...(options.apiKeys ?? []), ...(options.apiKey ? [options.apiKey] : [])]
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const item of raw) {
+    const clean = (item ?? '').trim()
+    if (!clean || seen.has(clean)) continue
+    seen.add(clean)
+    out.push(clean)
+  }
+  return out
+}
+
+async function callGeminiRelayBaton(options: GenerateServerOptions): Promise<ServerGeneration> {
+  const keys = collectKeyList(options)
+  if (keys.length === 0) throw new Error('未配置 Gemini API Key')
+  const chain = options.chain ?? deriveChain(options.model ?? SERVER_FLASH_MODEL)
   let lastError: unknown = null
+
   enterGeminiSlot()
   try {
-    for (const model of chain) {
-      try {
-        const res = await callModel(options, model)
-        recordProviderSuccess('gemini')
-        return res
-      } catch (error) {
-        lastError = error
-        const status = (error as { status?: number }).status
-        const message = error instanceof Error ? error.message : String(error)
-        recordProviderFailure('gemini', status, message)
-        if (status === 400 || status === 401 || status === 403) break
+    // 内部轮询所有可用 Gemini Key，每把 Key 先试首选模型再降级模型链
+    for (const key of keys) {
+      for (const model of chain) {
+        try {
+          const res = await callGeminiModelWithKey(options, key, model)
+          recordProviderSuccess('gemini')
+          return res
+        } catch (error) {
+          lastError = error
+          const status = (error as { status?: number }).status
+          const message = error instanceof Error ? error.message : String(error)
+          recordProviderFailure('gemini', status, message)
+          // 该把 Key 限流(429)或无效(400/401/403)时立即切换下一把 Gemini Key
+          if (status === 400 || status === 401 || status === 403 || status === 429) break
+        }
       }
     }
   } finally {
     leaveGeminiSlot()
   }
-  throw lastError instanceof Error ? lastError : new Error('Gemini 全部模型均不可用')
+  throw lastError instanceof Error ? lastError : new Error('Gemini 全部密钥及模型均不可用')
+}
+
+export async function testGeminiServer(
+  geminiKeys: string[],
+): Promise<{ ok: boolean; model?: string; providerName?: string; baton?: number; message?: string }> {
+  try {
+    const res = await callGeminiRelayBaton({
+      apiKeys: geminiKeys,
+      model: SERVER_FLASH_MODEL,
+      chain: [SERVER_FLASH_MODEL, SERVER_LITE_MODEL],
+      system: 'Reply with OK only.',
+      prompt: 'Ping',
+      maxOutputTokens: 16,
+      temperature: 0,
+    })
+    return {
+      ok: true,
+      model: res.model,
+      providerName: res.providerName,
+      baton: res.baton,
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error),
+    }
+  }
 }
 
 /**
- * 统一 AI 调用入口：
- * 1) 默认优先走 Gemini 完整降级链；
- * 2) Gemini 限流 / 报错 / 冷却 / 未配置 / 高并发排队时，自动转入永久免费备用服务商；
- * 3) 全部不可用时抛出错误由调用方平稳降级到本地引擎。
+ * 严格按第 1 棒 (Gemini 多 Key 轮询) → 第 2~10 棒 (Groq→OpenRouter→Cerebras→NVIDIA→Cloudflare→Mistral→Cohere→自定义1/2) 顺序接力。
  */
 export async function generateServer(options: GenerateServerOptions): Promise<ServerGeneration> {
-  const hasGemini = Boolean(options.apiKey?.trim())
+  const geminiKeys = collectKeyList(options)
+  const hasGemini = geminiKeys.length > 0
   const backupsReady = hasConfiguredBackup(options.backupKeys)
   const tier = inferTierFromModel(options.model)
-  const offloadForConcurrency = Boolean(
-    options.allowConcurrencyOffload && shouldOffloadGemini(options.backupKeys),
-  )
 
   if (!hasGemini && !backupsReady) {
-    throw new Error('未配置 GEMINI_API_KEY 或任何备用 AI Key')
+    throw new Error('未配置 Gemini 或任何接力赛 AI Key')
   }
 
-  const shouldTryGeminiFirst =
-    hasGemini && (!backupsReady || (!isProviderCoolingDown('gemini') && !offloadForConcurrency))
-
-  if (shouldTryGeminiFirst) {
+  // 第 1 棒永远绝对优先尝试 Google Gemini
+  if (hasGemini) {
     try {
-      return await callGeminiChain(options)
+      return await callGeminiRelayBaton(options)
     } catch (geminiError) {
       if (!backupsReady) throw geminiError
     }
   }
 
-  if (backupsReady) {
-    try {
-      const backupRes = await callBackupProvidersServer({
-        system: options.system,
-        prompt: options.prompt,
-        tier,
-        temperature: options.temperature,
-        maxOutputTokens: options.maxOutputTokens,
-        expectJson: Boolean(options.responseSchema),
-        keys: options.backupKeys,
-        rotate: offloadForConcurrency || isProviderCoolingDown('gemini'),
-      })
-      return { text: backupRes.text, model: backupRes.model }
-    } catch (backupError) {
-      // 若最初因并发/临时冷却跳过 Gemini 但所有备用均失败，再做一次 Gemini 兜底尝试
-      if (hasGemini && !shouldTryGeminiFirst) {
-        return await callGeminiChain(options)
-      }
-      throw backupError
-    }
+  // 第 1 棒限流/报错/超时/未配置时，立刻无缝接力第 2~10 棒
+  const backupRes = await callBackupProvidersServer({
+    system: options.system,
+    prompt: options.prompt,
+    messages: options.messages,
+    tier,
+    temperature: options.temperature,
+    maxOutputTokens: options.maxOutputTokens,
+    expectJson: Boolean(options.responseSchema),
+    keys: options.backupKeys,
+  })
+  return {
+    text: backupRes.text,
+    model: backupRes.model,
+    provider: backupRes.provider,
+    providerName: backupRes.providerName,
+    baton: backupRes.baton,
   }
-
-  return await callGeminiChain(options)
 }
 
 export function resolveServerModel(
@@ -222,4 +294,3 @@ export function resolveServerModel(
   if (defaultTier === 'lite') return SERVER_LITE_MODEL
   return SERVER_FLASH_MODEL
 }
-

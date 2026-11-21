@@ -15,11 +15,11 @@ import type { ApiSettings, NewsArticle, NewsDetail, NewsImpact, ReaderMode } fro
 import { Modal } from '@/components/ui/Modal'
 import { Badge } from '@/components/ui/Badge'
 import { AssetRow } from '@/components/news/NewsImpactPanel'
-import { hasAnyAiConfigured } from '@/lib/aiFallback'
+import { formatRelayBadge, hasAnyAiConfigured } from '@/lib/aiFallback'
 import { cn } from '@/lib/cn'
 import { formatRelativeTime } from '@/lib/format'
 import { fetchNewsDetail } from '@/lib/cloud'
-import { aiRoute, modelDisplayName, runNewsDetailClient } from '@/lib/gemini'
+import { aiRoute, runNewsDetailClient } from '@/lib/gemini'
 import { requestText } from '@/lib/market/net'
 import { localNewsImpact } from '@/lib/newsImpact'
 
@@ -257,12 +257,12 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
           <span className="flex flex-wrap items-center gap-2">
             <Badge tone={extractionMeta.tone}>{extractionMeta.label}</Badge>
             {degraded ? (
-              <Badge tone="neutral" title="未配置 AI Key 或均不可用，当前为本地启发式推演">
+              <Badge tone="neutral" title="未配置 AI 接力密钥，当前为本地启发式推演">
                 本地启发式
               </Badge>
             ) : (
               <Badge tone="gold" dot title={`实际执行模型：${model}`}>
-                Powered by {modelDisplayName(model ?? 'gemini-2.5-flash')}
+                {formatRelayBadge(model ?? 'gemini-2.5-flash')}
               </Badge>
             )}
             {impact && <span>置信度 {impact.confidence}%</span>}
@@ -371,7 +371,7 @@ export function NewsReaderPanel({ article, settings, onClose }: NewsReaderPanelP
                     </h3>
                   </div>
                   <Badge tone={degraded ? 'neutral' : 'gold'} dot={!degraded}>
-                    {degraded ? '本地启发式' : `Powered by ${modelDisplayName(model ?? 'gemini-2.5-flash')}`}
+                    {degraded ? '本地启发式' : formatRelayBadge(model ?? 'gemini-2.5-flash')}
                   </Badge>
                 </div>
                 <div className="space-y-2">

@@ -61,9 +61,11 @@ export async function enrichArticles(
   articles: ServerArticle[],
   apiKey: string,
   backupKeys?: ServerAiBackupKeys,
+  apiKeys?: string[],
 ): Promise<{ model: string | null; translatedCount: number }> {
+  const effectiveKeys = apiKeys && apiKeys.length > 0 ? apiKeys : apiKey ? [apiKey] : []
   const pending = articles.filter((item) => item.lang === 'en')
-  if ((!apiKey && !hasConfiguredBackup(backupKeys)) || pending.length === 0) {
+  if ((effectiveKeys.length === 0 && !hasConfiguredBackup(backupKeys)) || pending.length === 0) {
     return { model: null, translatedCount: articles.filter((a) => a.translation === 'done').length }
   }
 
@@ -86,6 +88,7 @@ export async function enrichArticles(
         try {
           const result = await generateServer({
             apiKey,
+            apiKeys: effectiveKeys,
             model: SERVER_LITE_MODEL,
             system: `${SERVER_RESEARCH_DOCTRINE}\n\n${BATCH_INSTRUCTION}`,
             prompt: JSON.stringify(payload),
@@ -189,6 +192,7 @@ export interface BuildDetailInput {
   /** 抓取清洗后的全文（为空则回落到 RSS 导语） */
   fullText: string
   apiKey: string
+  apiKeys?: string[]
   /** 可选模型覆盖（用于支持 Pro / Flash / Lite 路由模式） */
   model?: string
   /** 永久免费备用服务商凭证 */
@@ -197,7 +201,8 @@ export interface BuildDetailInput {
 
 /** 生成单篇新闻的深度详情（摘要要点 + 推演 + 全文翻译） */
 export async function buildNewsDetail(input: BuildDetailInput): Promise<NewsDetail> {
-  const { article, fullText, apiKey, backupKeys } = input
+  const { article, fullText, apiKey, apiKeys, backupKeys } = input
+  const effectiveKeys = apiKeys && apiKeys.length > 0 ? apiKeys : apiKey ? [apiKey] : []
   const body = (fullText || article.summary || article.title).slice(0, 14_000)
   const now = new Date().toISOString()
 
@@ -217,7 +222,7 @@ export async function buildNewsDetail(input: BuildDetailInput): Promise<NewsDeta
     degraded: true,
   }
 
-  if (!apiKey && !hasConfiguredBackup(backupKeys)) {
+  if (effectiveKeys.length === 0 && !hasConfiguredBackup(backupKeys)) {
     return {
       id: article.id,
       url: article.url,
@@ -239,6 +244,7 @@ export async function buildNewsDetail(input: BuildDetailInput): Promise<NewsDeta
 
   const detailResult = await generateServer({
     apiKey,
+    apiKeys: effectiveKeys,
     model: targetModel,
     system: `${SERVER_RESEARCH_DOCTRINE}\n\n${DETAIL_INSTRUCTION}`,
     prompt: `新闻来源：${article.sourceName}\n发布时间：${article.publishedAt}\n标题：${article.title}\n导语：${article.summary}\n\n全文：\n${body}`,
@@ -285,6 +291,7 @@ export async function buildNewsDetail(input: BuildDetailInput): Promise<NewsDeta
     try {
       const translated = await generateServer({
         apiKey,
+        apiKeys: effectiveKeys,
         model: SERVER_FLASH_MODEL,
         system: TRANSLATE_FULL_INSTRUCTION,
         prompt: fullText.slice(0, 14_000),

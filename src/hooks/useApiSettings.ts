@@ -1,20 +1,21 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import type { AiRoutingMode, ApiSettings, ProviderConfig, ProviderId } from '@/types'
+import type { AiRoutingMode, ApiSettings, ProviderConfig, ProviderId, ServerEnvStatus } from '@/types'
 import {
   DEFAULT_AI_FALLBACK,
+  collectClientGeminiKeys,
   countConfiguredBackupAi,
   hasAnyAiConfigured,
   normalizeAiFallback,
+  probeServerEnvStatus,
   setActiveAiFallbackConfig,
+  setServerEnvStatus,
 } from '@/lib/aiFallback'
 import { PROVIDER_IDS, isProviderConfigured } from '@/lib/market/registry'
 
-/** v2 结构：providers 覆盖全部行情引擎；v1 的 twelveDataKey 会自动迁移 */
 const STORAGE_KEY = 'apex-terminal:api-settings:v2'
 const LEGACY_KEY = 'apex-terminal:api-settings:v1'
 
-/** 历史遗留的单一模型值，迁移时视为「未设置自定义覆盖」 */
 const LEGACY_MODEL_VALUES = new Set([
   'gemini-2.5-flash',
   'gemini-2.5-pro',
@@ -33,6 +34,7 @@ export const DEFAULT_API_SETTINGS: ApiSettings = {
   geminiModel: '',
   aiRouting: 'auto',
   aiFallback: { ...DEFAULT_AI_FALLBACK },
+  newsDataKey: '',
   providers: emptyProviders(),
 }
 
@@ -57,11 +59,7 @@ function read(): ApiSettings {
           }
         }
       }
-    } else if (typeof parsed.twelveDataKey === 'string' && parsed.twelveDataKey.trim()) {
-      // v1 → v2 迁移：旧 Twelve Data Key 归入 providers.twelvedata
-      providers.twelvedata = { apiKey: parsed.twelveDataKey, secretKey: '' }
     }
-    // 旧版单一模型字段：若为历史默认值则清空，交由三级路由自动决定
     const legacyModel = typeof parsed.geminiModel === 'string' ? parsed.geminiModel.trim() : ''
     const geminiModel = LEGACY_MODEL_VALUES.has(legacyModel) ? '' : legacyModel
     return {
@@ -82,12 +80,12 @@ export interface ApiSettingsController {
   save: (next: ApiSettings) => void
   reset: () => void
   hasGemini: boolean
-  /** Gemini 或任一已启用的免费备用 AI 服务商是否就绪 */
+  geminiCount: number
   hasAnyAi: boolean
-  /** 已配置密钥的免费备用 AI 服务商数量 */
   backupAiCount: number
-  /** 已配置（可参与故障转移）的行情引擎数量 */
   configuredCount: number
+  serverEnv: ServerEnvStatus | null
+  refreshServerEnv: () => Promise<void>
 }
 
 export function useApiSettings(): ApiSettingsController {
@@ -96,6 +94,17 @@ export function useApiSettings(): ApiSettingsController {
     setActiveAiFallbackConfig(initial.aiFallback)
     return initial
   })
+  const [serverEnv, setServerEnv] = useState<ServerEnvStatus | null>(null)
+
+  const refreshServerEnv = useCallback(async () => {
+    const status = await probeServerEnvStatus()
+    setServerEnvStatus(status)
+    setServerEnv(status)
+  }, [])
+
+  useEffect(() => {
+    void refreshServerEnv()
+  }, [refreshServerEnv])
 
   useEffect(() => {
     setActiveAiFallbackConfig(settings.aiFallback)
@@ -128,13 +137,21 @@ export function useApiSettings(): ApiSettingsController {
     ),
   ).length
 
+  const clientGeminiCount = collectClientGeminiKeys(settings).length
+  const envGeminiCount = serverEnv?.geminiCount ?? 0
+  const geminiCount = Math.max(clientGeminiCount, envGeminiCount)
+  const hasGemini = geminiCount > 0
+
   return {
     settings,
     save,
     reset,
-    hasGemini: settings.geminiKey.trim().length > 0,
-    hasAnyAi: hasAnyAiConfigured(settings),
+    hasGemini,
+    geminiCount,
+    hasAnyAi: hasAnyAiConfigured(settings) || Boolean(serverEnv && (serverEnv.geminiCount > 0 || serverEnv.groq || serverEnv.openrouter || serverEnv.cerebras || serverEnv.nvidia || serverEnv.cloudflare || serverEnv.mistral || serverEnv.cohere || serverEnv.custom1 || serverEnv.custom2)),
     backupAiCount: countConfiguredBackupAi(normalizeAiFallback(settings.aiFallback)),
     configuredCount,
+    serverEnv,
+    refreshServerEnv,
   }
 }
